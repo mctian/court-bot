@@ -8,6 +8,7 @@ from logic import (
     _init_db,
     logic_register, logic_cancel, logic_adduser,
     logic_addpassword, logic_listpasswords, logic_usepassword,
+    logic_subscribe, logic_unsubscribe, _pop_subscribers_for_court,
     SLOT_DURATION_MINS, MAX_ACTIVE_RESERVATIONS, MAX_PASSWORDS,
     MAX_USERS_PER_RESERVATION, MAX_COURT_NUMBER, MAX_GROUPS_IN_FRONT,
     MAX_CREDENTIAL_LEN, PACIFIC,
@@ -409,6 +410,85 @@ class TestLogicUsePassword(unittest.TestCase):
         self.db.commit()
         r = logic_usepassword(self.db, res_id, pw_id, 1)
         self.assertIsNone(r["error"])
+
+
+# ─────────────────────────────────────────────────────────────
+# /subscribe  /unsubscribe
+# ─────────────────────────────────────────────────────────────
+class TestLogicSubscribe(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_success_any_court(self):
+        r = logic_subscribe(self.db, 1, 100)
+        self.assertIsNone(r["error"])
+        self.assertIsNone(r["court_number"])
+        self.assertFalse(r["replaced"])
+
+    def test_success_specific_court(self):
+        r = logic_subscribe(self.db, 1, 100, court_number=3)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["court_number"], 3)
+
+    def test_error_court_number_too_low(self):
+        r = logic_subscribe(self.db, 1, 100, court_number=0)
+        self.assertIsNotNone(r["error"])
+        self.assertIn("court_number", r["error"])
+
+    def test_error_court_number_too_high(self):
+        r = logic_subscribe(self.db, 1, 100, court_number=MAX_COURT_NUMBER + 1)
+        self.assertIsNotNone(r["error"])
+        self.assertIn("court_number", r["error"])
+
+    def test_replaces_existing_subscription(self):
+        logic_subscribe(self.db, 1, 100, court_number=2)
+        r = logic_subscribe(self.db, 1, 100, court_number=5)
+        self.assertIsNone(r["error"])
+        self.assertTrue(r["replaced"])
+        self.assertEqual(r["court_number"], 5)
+        count = self.db.execute("SELECT COUNT(*) FROM subscribers WHERE user_id=1").fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_unsubscribe_success(self):
+        logic_subscribe(self.db, 1, 100)
+        r = logic_unsubscribe(self.db, 1)
+        self.assertIsNone(r["error"])
+        count = self.db.execute("SELECT COUNT(*) FROM subscribers WHERE user_id=1").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_unsubscribe_not_found(self):
+        r = logic_unsubscribe(self.db, 99)
+        self.assertIsNotNone(r["error"])
+
+    def test_pop_returns_any_court_subscribers(self):
+        logic_subscribe(self.db, 1, 100, court_number=None)
+        subs = _pop_subscribers_for_court(self.db, 3)
+        self.assertEqual(len(subs), 1)
+        self.assertEqual(subs[0]["user_id"], 1)
+
+    def test_pop_returns_matching_court_subscribers(self):
+        logic_subscribe(self.db, 1, 100, court_number=3)
+        logic_subscribe(self.db, 2, 100, court_number=5)
+        subs = _pop_subscribers_for_court(self.db, 3)
+        self.assertEqual(len(subs), 1)
+        self.assertEqual(subs[0]["user_id"], 1)
+
+    def test_pop_excludes_different_court_subscribers(self):
+        logic_subscribe(self.db, 1, 100, court_number=5)
+        subs = _pop_subscribers_for_court(self.db, 3)
+        self.assertEqual(subs, [])
+
+    def test_pop_deletes_notified_subscribers(self):
+        logic_subscribe(self.db, 1, 100)
+        _pop_subscribers_for_court(self.db, 3)
+        count = self.db.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_pop_does_not_delete_unmatched_subscribers(self):
+        logic_subscribe(self.db, 1, 100, court_number=5)
+        _pop_subscribers_for_court(self.db, 3)
+        count = self.db.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]
+        self.assertEqual(count, 1)
 
 
 if __name__ == "__main__":

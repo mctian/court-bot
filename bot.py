@@ -6,14 +6,16 @@ and pings users 2 minutes before their slot begins.
 State is persisted in SQLite (court_bot.db).
 
 Commands:
-  /register      — join the queue
-  /adduser       — add up to 3 more players to a reservation (max 4 total)
-  /status        — see all reservations grouped by court
+  /register       — join the queue
+  /adduser        — add up to 3 more players to a reservation (max 4 total)
+  /status         — see all reservations grouped by court
   /myreservations — see your own reservations (private)
-  /cancel        — remove an upcoming slot
-  /addpassword   — add a court-system username & password to the shared pool
-  /listpasswords — show all passwords and whether they are currently in use
-  /usepassword   — assign a password from the pool to a reservation
+  /cancel         — remove an upcoming slot
+  /addpassword    — add a court-system username & password to the shared pool
+  /listpasswords  — show all passwords and whether they are currently in use
+  /usepassword    — assign a password from the pool to a reservation
+  /subscribe      — get a one-time DM 2 min before the next slot starts
+  /unsubscribe    — cancel your court notification subscription
 """
 
 import os
@@ -33,9 +35,11 @@ from logic import (
     _init_db, _row_to_res,
     _get_reservation, _get_password,
     _visible_reservations, _my_reservations, _reservation_for_password,
+    _pop_subscribers_for_court,
     _safe,
     logic_register, logic_cancel, logic_adduser,
     logic_addpassword, logic_listpasswords, logic_usepassword,
+    logic_subscribe, logic_unsubscribe,
 )
 
 # ─────────────────────────────────────────────────────────────
@@ -309,6 +313,39 @@ async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int,
     )
 
 # ─────────────────────────────────────────────────────────────
+# /subscribe
+# ─────────────────────────────────────────────────────────────
+@bot.tree.command(name="subscribe", description="Get a one-time DM 2 minutes before the next court slot starts")
+@app_commands.describe(court_number="Only notify for this specific court (omit for any court)")
+async def cmd_subscribe(interaction: discord.Interaction, court_number: int | None = None):
+    result = logic_subscribe(db, interaction.user.id, interaction.channel_id, court_number)
+    if result["error"]:
+        await interaction.response.send_message(result["error"], ephemeral=True); return
+
+    scope = f"Court {court_number}" if court_number else "any court"
+    verb  = "updated" if result["replaced"] else "set"
+    await interaction.response.send_message(
+        f"🔔  Subscription {verb}! You'll get a DM 2 minutes before the next slot on **{scope}**.\n"
+        f"Use `/unsubscribe` to cancel.\n"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+        ephemeral=True,
+    )
+
+# ─────────────────────────────────────────────────────────────
+# /unsubscribe
+# ─────────────────────────────────────────────────────────────
+@bot.tree.command(name="unsubscribe", description="Cancel your court notification subscription")
+async def cmd_unsubscribe(interaction: discord.Interaction):
+    result = logic_unsubscribe(db, interaction.user.id)
+    if result["error"]:
+        await interaction.response.send_message(result["error"], ephemeral=True); return
+    await interaction.response.send_message(
+        "🔕  Subscription cancelled. You won't receive any more court notifications.\n"
+        "*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+        ephemeral=True,
+    )
+
+# ─────────────────────────────────────────────────────────────
 # Helper: Log Missing Channel Permissions
 # ─────────────────────────────────────────────────────────────
 REQUIRED_PERMISSIONS = [
@@ -385,6 +422,18 @@ async def notification_loop():
                 print(f"⚠️  DM fallback also failed for {_safe(r['user_name'])}: {dm_err}")
         except discord.errors.HTTPException as e:
             print(f"⚠️  Reservation #{r['id']} — HTTP error: {e}")
+
+        for sub in _pop_subscribers_for_court(db, r["court_number"]):
+            try:
+                sub_user = await bot.fetch_user(sub["user_id"])
+                await sub_user.send(
+                    f"🔔  **Court {r['court_number']}** is opening up soon!\n"
+                    f"> Reservation **#{r['id']}** starts at "
+                    f"**{r['start_time'].strftime('%I:%M %p')}** "
+                    f"· ends {r['end_time'].strftime('%I:%M %p')}"
+                )
+            except Exception as sub_err:
+                print(f"⚠️  Subscriber DM failed for user {sub['user_id']}: {sub_err}")
 
 @notification_loop.before_loop
 async def _before_loop():

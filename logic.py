@@ -56,6 +56,13 @@ def _init_db(path: str = DB_PATH) -> sqlite3.Connection:
             added_by TEXT NOT NULL,
             added_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS subscribers (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL UNIQUE,
+            channel_id   INTEGER NOT NULL,
+            court_number INTEGER,
+            created_at   TEXT NOT NULL
+        );
     """)
     conn.commit()
     return conn
@@ -124,7 +131,7 @@ def _my_reservations(conn: sqlite3.Connection, user_id: int) -> list[dict]:
         "SELECT * FROM reservations WHERE active=1 OR end_time>? ORDER BY start_time",
         (now.isoformat(),)
     ).fetchall()
-    return [_row_to_res(r) for r in rows if user_id in json.loads(r[8])]
+    return [_row_to_res(r) for r in rows if r[1] == user_id or user_id in json.loads(r[8])]
 
 # ─────────────────────────────────────────────────────────────
 # Security Helpers
@@ -178,7 +185,7 @@ def logic_register(
                                      registered_at, start_time, end_time, users)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (user_id, user_name, channel_id, court_number, now.isoformat(),
-         start_time.isoformat(), end_time.isoformat(), json.dumps([user_id]))
+         start_time.isoformat(), end_time.isoformat(), json.dumps([]))
     )
     conn.commit()
     return {
@@ -334,3 +341,65 @@ def logic_usepassword(
     conn.execute("UPDATE reservations SET password_id=? WHERE id=?", (password_id, reservation_id))
     conn.commit()
     return {"error": None, "pw_username": pw["username"], "court_number": r["court_number"]}
+
+
+def logic_subscribe(
+    conn: sqlite3.Connection,
+    user_id: int,
+    channel_id: int,
+    court_number: int | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """
+    Registers a one-shot subscription: the user gets a DM 2 min before the
+    next slot starts (on the specified court, or any court if None).
+    Replaces any existing subscription for this user.
+    Returns {"error": None, "court_number": int | None, "replaced": bool}.
+    """
+    if court_number is not None and not (1 <= court_number <= MAX_COURT_NUMBER):
+        return {"error": f"❌  `court_number` must be between 1 and {MAX_COURT_NUMBER}."}
+
+    if now is None:
+        now = datetime.now()
+
+    existing = conn.execute(
+        "SELECT id FROM subscribers WHERE user_id=?", (user_id,)
+    ).fetchone()
+    conn.execute("DELETE FROM subscribers WHERE user_id=?", (user_id,))
+    conn.execute(
+        "INSERT INTO subscribers (user_id, channel_id, court_number, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, channel_id, court_number, now.isoformat()),
+    )
+    conn.commit()
+    return {"error": None, "court_number": court_number, "replaced": existing is not None}
+
+
+def logic_unsubscribe(
+    conn: sqlite3.Connection,
+    user_id: int,
+) -> dict:
+    """Returns {"error": str} if no subscription existed, {"error": None} on success."""
+    deleted = conn.execute("DELETE FROM subscribers WHERE user_id=?", (user_id,)).rowcount
+    conn.commit()
+    if deleted == 0:
+        return {"error": "❌  You don't have an active subscription."}
+    return {"error": None}
+
+
+def _pop_subscribers_for_court(
+    conn: sqlite3.Connection,
+    court_number: int,
+) -> list[dict]:
+    """
+    Returns all subscribers that should be notified for this court, then
+    deletes them (one-shot delivery).
+    """
+    rows = conn.execute(
+        "SELECT id, user_id FROM subscribers WHERE court_number=? OR court_number IS NULL",
+        (court_number,),
+    ).fetchall()
+    if rows:
+        placeholders = ",".join("?" * len(rows))
+        conn.execute(f"DELETE FROM subscribers WHERE id IN ({placeholders})", [r[0] for r in rows])
+        conn.commit()
+    return [{"user_id": r[1]} for r in rows]

@@ -18,6 +18,8 @@ Reservations are persisted in a local SQLite database (`court_bot.db`).
 | `/addpassword` | Add a court-system login to the shared password pool |
 | `/listpasswords` | View all passwords and which reservations are using them |
 | `/usepassword` | Assign a pooled password to one of your reservations |
+| `/subscribe` | Get a one-time DM 2 minutes before the next slot starts |
+| `/unsubscribe` | Cancel your court notification subscription |
 | Auto-notify | Bot pings you in the channel 2 minutes before your turn |
 | Auto-expire | Slots are marked inactive once their 45-minute window ends |
 
@@ -108,7 +110,7 @@ You should see:
 
 ```
 ✅  Logged in as Court Bot#1234  (ID: ...)
-   Synced 8 slash command(s) to guild 123456789.
+   Synced 10 slash command(s) to guild 123456789.
 ```
 
 Slash commands will now appear in your server when you type `/`.
@@ -172,6 +174,27 @@ Password IDs are shown in `/listpasswords`; reservation IDs are shown in `/statu
 
 ---
 
+### `/subscribe [court_number]`
+Subscribe to receive a **one-time DM** 2 minutes before the next court slot starts.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `court_number` | integer (optional) | Only notify when this specific court is about to start. Omit to be notified for any court. |
+
+The subscription fires once and then cancels itself automatically.
+Calling `/subscribe` again replaces any existing subscription.
+
+**Examples:**
+- `/subscribe` — notify me when any court slot is about to start
+- `/subscribe court_number:3` — notify me only for Court 3
+
+---
+
+### `/unsubscribe`
+Cancels your active subscription. Has no effect if you have no subscription.
+
+---
+
 ## Notification Timing
 
 The bot runs a background check every **20 seconds**.
@@ -201,4 +224,4 @@ LOOP_INTERVAL_SECS  = 20   # background check frequency (seconds)
 python -m unittest test_bot -v
 ```
 
-45 unit tests cover every slash command's logic — validation, error branches, DB writes, and edge cases — using an in-memory SQLite database so no real data is touched.
+57 unit tests cover every slash command's logic — validation, error branches, DB writes, and edge cases — using an in-memory SQLite database so no real data is touched.
