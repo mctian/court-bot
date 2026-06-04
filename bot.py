@@ -168,7 +168,7 @@ async def cmd_register(
         value = f"**{result['start_time'].strftime('%I:%M %p')}** → {result['end_time'].strftime('%I:%M %p')}",
         inline = False,
     )
-    embed.set_footer(text="🔔  You'll be pinged 2 minutes before your slot starts!  ·  💬 DM this bot to avoid channel clutter")
+    embed.set_footer(text="🔔  You'll be pinged 2 minutes before your slot starts!  ·  💬 DM this bot to use commands without cluttering the channel")
     await interaction.response.send_message(embed=embed)
 
 # ─────────────────────────────────────────────────────────────
@@ -264,10 +264,13 @@ async def cmd_addpassword(interaction: discord.Interaction, username: str, passw
 async def cmd_listpasswords(interaction: discord.Interaction):
     result = logic_listpasswords(db)
     if result["empty"]:
-        await interaction.response.send_message("📋  No passwords in the pool yet. Use `/addpassword` to add one."); return
+        await interaction.response.send_message(
+            "📋  No passwords in the pool yet. Use `/addpassword` to add one.\n"
+            "*💬 Tip: DM this bot to use commands without cluttering the channel.*"
+        ); return
 
     embed = discord.Embed(title="🔑  Court Password Pool", color=0x9B59B6)
-    embed.set_footer(text=f"Resets nightly at 12:00 AM PT · Next: {result['next_expire'].strftime('%b %d')}  ·  💬 DM this bot to avoid channel clutter")
+    embed.set_footer(text=f"Resets nightly at 12:00 AM PT · Next: {result['next_expire'].strftime('%b %d')}  ·  💬 DM this bot to use commands without cluttering the channel")
 
     def fmt_free(p):
         return f"`{p['username']}` `{p['password']}`"
