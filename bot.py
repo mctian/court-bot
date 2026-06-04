@@ -27,13 +27,12 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 from logic import (
-    SLOT_DURATION_MINS, NOTIFY_WINDOW_SECS, LOOP_INTERVAL_SECS,
+    NOTIFY_WINDOW_SECS, LOOP_INTERVAL_SECS,
     PACIFIC, MIDNIGHT_PT,
-    MAX_COURT_NUMBER, MAX_CREDENTIAL_LEN,
+    MAX_CREDENTIAL_LEN,
     REGISTER_COOLDOWN_SECS, WRITE_COOLDOWN_SECS, MAX_USERS_PER_RESERVATION,
     DB_PATH,
     _init_db, _row_to_res,
-    _get_reservation, _get_password,
     _visible_reservations, _my_reservations, _reservation_for_password,
     _pop_subscribers_for_court,
     _safe,
@@ -154,7 +153,8 @@ async def cmd_register(
         interaction.channel_id, court_number, groups_in_front, time_remaining,
     )
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
 
     embed = discord.Embed(title="✅  Reservation Registered!", color=0x2ECC71)
     embed.add_field(name="Group",            value=f"<@{interaction.user.id}>",                      inline=True)
@@ -195,7 +195,8 @@ async def cmd_myreservations(interaction: discord.Interaction):
 async def cmd_cancel(interaction: discord.Interaction, reservation_id: int):
     result = logic_cancel(db, reservation_id, interaction.user.id)
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
     await interaction.response.send_message(
         f"✅  Reservation **#{reservation_id}** has been cancelled.\n"
         f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
@@ -227,11 +228,14 @@ async def cmd_adduser(
     ]
     result = logic_adduser(db, reservation_id, interaction.user.id, users_to_add)
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
 
     lines = []
-    if result["added"]:   lines.append(f"✅  Added: {', '.join(result['added'])}")
-    if result["skipped"]: lines.append(f"⚠️  Skipped: {', '.join(result['skipped'])}")
+    if result["added"]:
+        lines.append(f"✅  Added: {', '.join(result['added'])}")
+    if result["skipped"]:
+        lines.append(f"⚠️  Skipped: {', '.join(result['skipped'])}")
     users = result["users"]
     lines.append(f"\n👥  Current players ({len(users)}/{MAX_USERS_PER_RESERVATION}): {'  '.join(f'<@{uid}>' for uid in users)}")
     lines.append("\n*💬 Tip: DM this bot to use commands without cluttering the channel.*")
@@ -249,7 +253,8 @@ async def cmd_adduser(
 async def cmd_addpassword(interaction: discord.Interaction, username: str, password: str):
     result = logic_addpassword(db, username, password, interaction.user.display_name)
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
     print(f"🔑  Password #{result['pw_id']} added by {_safe(interaction.user.display_name)}")
     await interaction.response.send_message(
         f"✅  Password **#{result['pw_id']}** added to the pool.\n"
@@ -267,7 +272,8 @@ async def cmd_listpasswords(interaction: discord.Interaction):
         await interaction.response.send_message(
             "📋  No passwords in the pool yet. Use `/addpassword` to add one.\n"
             "*💬 Tip: DM this bot to use commands without cluttering the channel.*"
-        ); return
+        )
+        return
 
     embed = discord.Embed(title="🔑  Court Password Pool", color=0x9B59B6)
     embed.set_footer(text=f"Resets nightly at 12:00 AM PT · Next: {result['next_expire'].strftime('%b %d')}  ·  💬 DM this bot to use commands without cluttering the channel")
@@ -308,7 +314,8 @@ async def cmd_listpasswords(interaction: discord.Interaction):
 async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int, password_id: int):
     result = logic_usepassword(db, reservation_id, password_id, interaction.user.id)
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
     await interaction.response.send_message(
         f"✅  Password **#{password_id}** (`{result['pw_username']}`) assigned to "
         f"Reservation **#{reservation_id}** · Court {result['court_number']}.\n"
@@ -323,7 +330,8 @@ async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int,
 async def cmd_subscribe(interaction: discord.Interaction, court_number: int | None = None):
     result = logic_subscribe(db, interaction.user.id, interaction.channel_id, court_number)
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
 
     scope = f"Court {court_number}" if court_number else "any court"
     verb  = "updated" if result["replaced"] else "set"
@@ -341,7 +349,8 @@ async def cmd_subscribe(interaction: discord.Interaction, court_number: int | No
 async def cmd_unsubscribe(interaction: discord.Interaction):
     result = logic_unsubscribe(db, interaction.user.id)
     if result["error"]:
-        await interaction.response.send_message(result["error"], ephemeral=True); return
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
     await interaction.response.send_message(
         "🔕  Subscription cancelled. You won't receive any more court notifications.\n"
         "*💬 Tip: DM this bot to use commands without cluttering the channel.*",

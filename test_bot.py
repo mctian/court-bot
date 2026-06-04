@@ -11,7 +11,7 @@ from logic import (
     logic_subscribe, logic_unsubscribe, _pop_subscribers_for_court,
     SLOT_DURATION_MINS, MAX_ACTIVE_RESERVATIONS, MAX_PASSWORDS,
     MAX_USERS_PER_RESERVATION, MAX_COURT_NUMBER, MAX_GROUPS_IN_FRONT,
-    MAX_CREDENTIAL_LEN, PACIFIC,
+    MAX_CREDENTIAL_LEN,
 )
 
 
