@@ -298,7 +298,7 @@ async def cmd_listpasswords(interaction: discord.Interaction):
     )
     embed.add_field(
         name   = "💡  Tip",
-        value  = "Mark a free password as in-use by assigning it to a court:\n`/usepassword reservation_id:<id> password_id:<id>`\nGet reservation IDs from `/status`.",
+        value  = "Mark a free password as in-use by assigning it to a court:\n`/usepassword reservation_id:<id> username:<username>`\nGet reservation IDs from `/status`.",
         inline = False,
     )
     await interaction.response.send_message(embed=embed)
