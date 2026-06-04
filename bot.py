@@ -64,7 +64,7 @@ db = _init_db(DB_PATH)
 def build_status_embed(res_list: list[dict], title: str = "🏸  Court Reservation Board") -> discord.Embed:
     now   = datetime.now()
     embed = discord.Embed(title=title, color=0x1ABC9C)
-    embed.set_footer(text=f"Updated {now.strftime('%I:%M:%S %p')}")
+    embed.set_footer(text=f"Updated {now.strftime('%I:%M:%S %p')}  ·  💬 DM this bot to use commands without cluttering the channel")
 
     if not res_list:
         embed.description = "No reservations to display."
@@ -164,7 +164,7 @@ async def cmd_register(
         value = f"**{result['start_time'].strftime('%I:%M %p')}** → {result['end_time'].strftime('%I:%M %p')}",
         inline = False,
     )
-    embed.set_footer(text="🔔  You'll be pinged 2 minutes before your slot starts!")
+    embed.set_footer(text="🔔  You'll be pinged 2 minutes before your slot starts!  ·  💬 DM this bot to avoid channel clutter")
     await interaction.response.send_message(embed=embed)
 
 # ─────────────────────────────────────────────────────────────
@@ -193,7 +193,9 @@ async def cmd_cancel(interaction: discord.Interaction, reservation_id: int):
     if result["error"]:
         await interaction.response.send_message(result["error"], ephemeral=True); return
     await interaction.response.send_message(
-        f"✅  Reservation **#{reservation_id}** has been cancelled.", ephemeral=True
+        f"✅  Reservation **#{reservation_id}** has been cancelled.\n"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+        ephemeral=True,
     )
 
 # ─────────────────────────────────────────────────────────────
@@ -228,6 +230,7 @@ async def cmd_adduser(
     if result["skipped"]: lines.append(f"⚠️  Skipped: {', '.join(result['skipped'])}")
     users = result["users"]
     lines.append(f"\n👥  Current players ({len(users)}/{MAX_USERS_PER_RESERVATION}): {'  '.join(f'<@{uid}>' for uid in users)}")
+    lines.append("\n*💬 Tip: DM this bot to use commands without cluttering the channel.*")
     await interaction.response.send_message("\n".join(lines))
 
 # ─────────────────────────────────────────────────────────────
@@ -246,7 +249,8 @@ async def cmd_addpassword(interaction: discord.Interaction, username: str, passw
     print(f"🔑  Password #{result['pw_id']} added by {_safe(interaction.user.display_name)}")
     await interaction.response.send_message(
         f"✅  Password **#{result['pw_id']}** added to the pool.\n"
-        f"> Username: `{result['username']}`  ·  Password: `{result['password']}`"
+        f"> Username: `{result['username']}`  ·  Password: `{result['password']}`\n"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*"
     )
 
 # ─────────────────────────────────────────────────────────────
@@ -259,7 +263,7 @@ async def cmd_listpasswords(interaction: discord.Interaction):
         await interaction.response.send_message("📋  No passwords in the pool yet. Use `/addpassword` to add one."); return
 
     embed = discord.Embed(title="🔑  Court Password Pool", color=0x9B59B6)
-    embed.set_footer(text=f"Resets nightly at 12:00 AM PT · Next: {result['next_expire'].strftime('%b %d')}")
+    embed.set_footer(text=f"Resets nightly at 12:00 AM PT · Next: {result['next_expire'].strftime('%b %d')}  ·  💬 DM this bot to avoid channel clutter")
 
     def fmt_free(p):
         return f"`{p['username']}` `{p['password']}`"
@@ -300,7 +304,8 @@ async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int,
         await interaction.response.send_message(result["error"], ephemeral=True); return
     await interaction.response.send_message(
         f"✅  Password **#{password_id}** (`{result['pw_username']}`) assigned to "
-        f"Reservation **#{reservation_id}** · Court {result['court_number']}."
+        f"Reservation **#{reservation_id}** · Court {result['court_number']}.\n"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*"
     )
 
 # ─────────────────────────────────────────────────────────────
