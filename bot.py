@@ -16,6 +16,7 @@ Commands:
   /usepassword    — assign a password from the pool to a reservation
   /subscribe      — get a one-time DM 2 min before the next slot starts
   /unsubscribe    — cancel your court notification subscription
+  /delete         — permanently delete one of your reservations
 """
 
 import os
@@ -38,7 +39,7 @@ from logic import (
     _safe,
     logic_register, logic_cancel, logic_adduser,
     logic_addpassword, logic_listpasswords, logic_usepassword,
-    logic_subscribe, logic_unsubscribe,
+    logic_subscribe, logic_unsubscribe, logic_delete,
 )
 
 # ─────────────────────────────────────────────────────────────
@@ -309,15 +310,15 @@ async def cmd_listpasswords(interaction: discord.Interaction):
 @app_commands.checks.cooldown(1, WRITE_COOLDOWN_SECS, key=lambda i: i.user.id)
 @app_commands.describe(
     reservation_id = "The reservation ID to assign the password to (from /status)",
-    password_id    = "The password ID to assign (from /listpasswords)",
+    username       = "The username of the password to assign (from /listpasswords)",
 )
-async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int, password_id: int):
-    result = logic_usepassword(db, reservation_id, password_id, interaction.user.id)
+async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int, username: str):
+    result = logic_usepassword(db, reservation_id, username, interaction.user.id)
     if result["error"]:
         await interaction.response.send_message(result["error"], ephemeral=True)
         return
     await interaction.response.send_message(
-        f"✅  Password **#{password_id}** (`{result['pw_username']}`) assigned to "
+        f"✅  `{result['pw_username']}` assigned to "
         f"Reservation **#{reservation_id}** · Court {result['court_number']}.\n"
         f"*💬 Tip: DM this bot to use commands without cluttering the channel.*"
     )
@@ -354,6 +355,22 @@ async def cmd_unsubscribe(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🔕  Subscription cancelled. You won't receive any more court notifications.\n"
         "*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+        ephemeral=True,
+    )
+
+# ─────────────────────────────────────────────────────────────
+# /delete
+# ─────────────────────────────────────────────────────────────
+@bot.tree.command(name="delete", description="Permanently delete any reservation")
+@app_commands.describe(reservation_id="The reservation number shown in /status")
+async def cmd_delete(interaction: discord.Interaction, reservation_id: int):
+    result = logic_delete(db, reservation_id)
+    if result["error"]:
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
+    await interaction.response.send_message(
+        f"🗑️  Reservation **#{reservation_id}** has been permanently deleted.\n"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
         ephemeral=True,
     )
 

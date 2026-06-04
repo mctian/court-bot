@@ -17,7 +17,8 @@ Reservations are persisted in a local SQLite database (`court_bot.db`).
 | `/cancel` | Remove an upcoming slot before it starts |
 | `/addpassword` | Add a court-system login to the shared password pool |
 | `/listpasswords` | View all passwords and which reservations are using them |
-| `/usepassword` | Assign a pooled password to one of your reservations |
+| `/usepassword` | Assign a pooled password to one of your reservations (by username) |
+| `/delete` | Permanently delete any reservation |
 | `/subscribe` | Get a one-time DM 2 minutes before the next slot starts |
 | `/unsubscribe` | Cancel your court notification subscription |
 | Auto-notify | Bot pings you in the channel 2 minutes before your turn |
@@ -168,9 +169,14 @@ Each entry displays the username, password, and (if in use) when it frees up.
 
 ---
 
-### `/usepassword reservation_id password_id`
-Assigns a free password from the pool to one of your reservations.
-Password IDs are shown in `/listpasswords`; reservation IDs are shown in `/status`.
+### `/usepassword reservation_id username`
+Assigns a password from the pool to one of your reservations by specifying the username.
+Usernames are shown in `/listpasswords`; reservation IDs are shown in `/status`.
+
+---
+
+### `/delete reservation_id`
+Permanently removes a reservation from the database. Works on any reservation regardless of state or owner.
 
 ---
 
@@ -224,4 +230,4 @@ LOOP_INTERVAL_SECS  = 20   # background check frequency (seconds)
 python -m unittest test_bot -v
 ```
 
-57 unit tests cover every slash command's logic — validation, error branches, DB writes, and edge cases — using an in-memory SQLite database so no real data is touched.
+62 unit tests cover every slash command's logic — validation, error branches, DB writes, and edge cases — using an in-memory SQLite database so no real data is touched.

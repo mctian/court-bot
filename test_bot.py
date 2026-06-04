@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from logic import (
     _init_db,
     logic_register, logic_cancel, logic_adduser,
-    logic_addpassword, logic_listpasswords, logic_usepassword,
+    logic_addpassword, logic_listpasswords, logic_usepassword, logic_delete,
     logic_subscribe, logic_unsubscribe, _pop_subscribers_for_court,
     SLOT_DURATION_MINS, MAX_ACTIVE_RESERVATIONS, MAX_PASSWORDS,
     MAX_USERS_PER_RESERVATION, MAX_COURT_NUMBER, MAX_GROUPS_IN_FRONT,
@@ -352,63 +352,98 @@ class TestLogicUsePassword(unittest.TestCase):
 
     def test_success(self):
         res_id = insert_res(self.db, user_id=1, court_number=3)
-        pw_id  = insert_pw(self.db)
-        r = logic_usepassword(self.db, res_id, pw_id, 1)
+        insert_pw(self.db, username="user1")
+        r = logic_usepassword(self.db, res_id, "user1", 1)
         self.assertIsNone(r["error"])
         self.assertEqual(r["court_number"], 3)
         self.assertEqual(r["pw_username"], "user1")
 
     def test_password_id_persisted_to_reservation(self):
         res_id = insert_res(self.db, user_id=1)
-        pw_id  = insert_pw(self.db)
-        logic_usepassword(self.db, res_id, pw_id, 1)
+        pw_id  = insert_pw(self.db, username="user1")
+        logic_usepassword(self.db, res_id, "user1", 1)
         stored = self.db.execute(
             "SELECT password_id FROM reservations WHERE id=?", (res_id,)
         ).fetchone()[0]
         self.assertEqual(stored, pw_id)
 
     def test_error_reservation_not_found(self):
-        pw_id = insert_pw(self.db)
-        r = logic_usepassword(self.db, 999, pw_id, 1)
+        insert_pw(self.db, username="user1")
+        r = logic_usepassword(self.db, 999, "user1", 1)
         self.assertIsNotNone(r["error"])
         self.assertIn("not found", r["error"])
 
     def test_error_reservation_inactive(self):
         res_id = insert_res(self.db, user_id=1, active=False)
-        pw_id  = insert_pw(self.db)
-        r = logic_usepassword(self.db, res_id, pw_id, 1)
+        insert_pw(self.db, username="user1")
+        r = logic_usepassword(self.db, res_id, "user1", 1)
         self.assertIsNotNone(r["error"])
         self.assertIn("active", r["error"])
 
     def test_error_wrong_caller(self):
         res_id = insert_res(self.db, user_id=1)
-        pw_id  = insert_pw(self.db)
-        r = logic_usepassword(self.db, res_id, pw_id, 2)
+        insert_pw(self.db, username="user1")
+        r = logic_usepassword(self.db, res_id, "user1", 2)
         self.assertIsNotNone(r["error"])
         self.assertIn("registered", r["error"])
 
     def test_error_password_not_found(self):
         res_id = insert_res(self.db, user_id=1)
-        r = logic_usepassword(self.db, res_id, 999, 1)
+        r = logic_usepassword(self.db, res_id, "nonexistent", 1)
         self.assertIsNotNone(r["error"])
-        self.assertIn("not found", r["error"])
+        self.assertIn("No password found", r["error"])
 
     def test_error_password_already_in_use_by_other_reservation(self):
         res_id1 = insert_res(self.db, user_id=1, court_number=1)
         res_id2 = insert_res(self.db, user_id=2, court_number=2)
-        pw_id   = insert_pw(self.db)
+        pw_id   = insert_pw(self.db, username="user1")
         self.db.execute("UPDATE reservations SET password_id=? WHERE id=?", (pw_id, res_id1))
         self.db.commit()
-        r = logic_usepassword(self.db, res_id2, pw_id, 2)
+        r = logic_usepassword(self.db, res_id2, "user1", 2)
         self.assertIsNotNone(r["error"])
         self.assertIn("already in use", r["error"])
 
     def test_reassign_same_password_to_same_reservation_succeeds(self):
         res_id = insert_res(self.db, user_id=1)
-        pw_id  = insert_pw(self.db)
+        pw_id  = insert_pw(self.db, username="user1")
         self.db.execute("UPDATE reservations SET password_id=? WHERE id=?", (pw_id, res_id))
         self.db.commit()
-        r = logic_usepassword(self.db, res_id, pw_id, 1)
+        r = logic_usepassword(self.db, res_id, "user1", 1)
+        self.assertIsNone(r["error"])
+
+
+# ─────────────────────────────────────────────────────────────
+# /delete
+# ─────────────────────────────────────────────────────────────
+class TestLogicDelete(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_success(self):
+        res_id = insert_res(self.db, user_id=1)
+        r = logic_delete(self.db, res_id)
+        self.assertIsNone(r["error"])
+        row = self.db.execute("SELECT id FROM reservations WHERE id=?", (res_id,)).fetchone()
+        self.assertIsNone(row)
+
+    def test_error_not_found(self):
+        r = logic_delete(self.db, 999)
+        self.assertIsNotNone(r["error"])
+        self.assertIn("not found", r["error"])
+
+    def test_can_delete_another_users_reservation(self):
+        res_id = insert_res(self.db, user_id=1)
+        r = logic_delete(self.db, res_id)
+        self.assertIsNone(r["error"])
+
+    def test_can_delete_inactive_reservation(self):
+        res_id = insert_res(self.db, user_id=1, active=False)
+        r = logic_delete(self.db, res_id)
+        self.assertIsNone(r["error"])
+
+    def test_can_delete_started_reservation(self):
+        res_id = insert_res(self.db, user_id=1, start_offset_mins=-10)
+        r = logic_delete(self.db, res_id)
         self.assertIsNone(r["error"])
 
 

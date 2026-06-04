@@ -311,10 +311,11 @@ def logic_listpasswords(
 def logic_usepassword(
     conn: sqlite3.Connection,
     reservation_id: int,
-    password_id: int,
+    username: str,
     caller_user_id: int,
 ) -> dict:
     """
+    Looks up the password pool entry by username, then assigns it to the reservation.
     Returns {"error": str} on failure, or
     {"error": None, "pw_username": str, "court_number": int} on success.
     """
@@ -326,21 +327,35 @@ def logic_usepassword(
     if caller_user_id != r["user_id"]:
         return {"error": "❌  Only the person who registered this reservation can assign a password."}
 
-    pw = _get_password(conn, password_id)
-    if not pw:
-        return {"error": f"❌  Password **#{password_id}** not found. Use `/listpasswords` to see available IDs."}
+    row = conn.execute("SELECT * FROM passwords WHERE username=?", (username,)).fetchone()
+    if not row:
+        return {"error": f"❌  No password found for username `{username}`. Use `/listpasswords` to see available usernames."}
+    pw = _row_to_pw(row)
 
-    existing_res = _reservation_for_password(conn, password_id)
+    existing_res = _reservation_for_password(conn, pw["id"])
     if existing_res and existing_res["id"] != reservation_id:
         return {
-            "error": f"❌  Password **#{password_id}** is already in use by Reservation "
+            "error": f"❌  `{username}` is already in use by Reservation "
                      f"**#{existing_res['id']}** (Court {existing_res['court_number']}, "
                      f"frees at {existing_res['end_time'].strftime('%-I:%M %p')})."
         }
 
-    conn.execute("UPDATE reservations SET password_id=? WHERE id=?", (password_id, reservation_id))
+    conn.execute("UPDATE reservations SET password_id=? WHERE id=?", (pw["id"], reservation_id))
     conn.commit()
     return {"error": None, "pw_username": pw["username"], "court_number": r["court_number"]}
+
+
+def logic_delete(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+) -> dict:
+    """Hard-deletes a reservation regardless of owner or state. Returns {"error": str} or {"error": None}."""
+    r = _get_reservation(conn, reservation_id)
+    if not r:
+        return {"error": f"❌  Reservation **#{reservation_id}** not found."}
+    conn.execute("DELETE FROM reservations WHERE id=?", (reservation_id,))
+    conn.commit()
+    return {"error": None}
 
 
 def logic_subscribe(
