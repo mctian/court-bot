@@ -22,6 +22,7 @@ Pet System:
   /pet            — show your pet publicly; recovery code sent privately
   /food           — check how much food you have
   /feed [amount]  — feed your pet to gain XP (default: all food)
+  /play <pet>     — play a sport with another named pet for XP (once per 30 min)
   /rename <name>  — give your pet a new name
   /whistle <code> — recover your pet using the code shown in /pet
 
@@ -53,7 +54,7 @@ from logic import (
     logic_register, logic_cancel, logic_adduser,
     logic_addpassword, logic_listpasswords, logic_usepassword,
     logic_subscribe, logic_unsubscribe, logic_delete,
-    logic_pet, logic_food, logic_feed, logic_whistle, logic_rename,
+    logic_pet, logic_food, logic_feed, logic_play, logic_whistle, logic_rename,
     delete_expired_passwords,
 )
 
@@ -508,6 +509,52 @@ async def cmd_feed(interaction: discord.Interaction, amount: int | None = None):
         lines.append(f"✨  **{r['pet_name']}** {r['new_emoji']} evolved!  (Tier {r['old_tier']} → {r['new_tier']})")
     lines.append(f"📊  {bar}")
     lines.append(f"🍖  Food remaining: **{r['food_left']}**")
+    if r["at_max"]:
+        lines.append("🏆  **Maximum level reached!**")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+# ─────────────────────────────────────────────────────────────
+# /play
+# ─────────────────────────────────────────────────────────────
+@bot.tree.command(name="play", description="Play a sport with another named pet to earn XP (once per 30 min)")
+@app_commands.describe(with_pet="Name of the pet to play against (must not be the default name)")
+async def cmd_play(interaction: discord.Interaction, with_pet: str):
+    result = logic_play(db, interaction.user.id, interaction.user.display_name, with_pet_name=with_pet)
+    if result["error"] == "cooldown":
+        mins = result["remaining_mins"]
+        secs = result["remaining_secs"]
+        await interaction.response.send_message(
+            f"😴  Your pet is resting! Try again in **{mins}m {secs}s**.",
+            ephemeral=True,
+        )
+        return
+    if result["error"] == "default_name":
+        await interaction.response.send_message(
+            "❌  Specify a named pet — pets with the default name **Pet** don't count.",
+            ephemeral=True,
+        )
+        return
+    if result["error"] == "opponent_not_found":
+        await interaction.response.send_message(
+            f"❌  No pet named **{_safe(with_pet)}** found (can't play against yourself either).",
+            ephemeral=True,
+        )
+        return
+    if result["error"]:
+        await interaction.response.send_message(result["error"], ephemeral=True)
+        return
+
+    r   = result
+    opp = r["opponent"]
+    bar = _xp_bar(r["new_xp"])
+    scene = f"{r['old_emoji']} {r['sport']} {opp['emoji']}"
+    if r["jackpot"]:
+        lines = [f"{scene}  **{r['pet_name']}** vs **{opp['pet_name']}** — badminton!  **+{r['xp_gain']} XP!** 🎉"]
+    else:
+        lines = [f"{scene}  **{r['pet_name']}** vs **{opp['pet_name']}**  **+{r['xp_gain']} XP**"]
+    if r["grew"]:
+        lines.append(f"✨  **{r['pet_name']}** {r['new_emoji']} evolved!  (Tier {r['old_tier']} → {r['new_tier']})")
+    lines.append(f"📊  {bar}")
     if r["at_max"]:
         lines.append("🏆  **Maximum level reached!**")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)

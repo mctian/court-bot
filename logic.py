@@ -103,8 +103,14 @@ FOOD_PER_RESERVATION     = 20
 FOOD_PER_PASSWORD        = 5
 FOOD_PER_CMD             = 1
 CMD_FOOD_COOLDOWN_SECS   = 60
+PLAY_COOLDOWN_SECS       = 1800
+PLAY_XP_BADMINTON        = 10
+PLAY_XP_DEFAULT          = 1
 MIN_PASSWORDS_FOR_NEW_RES = 2
 MAX_PET_NAME_LEN         = 32
+DEFAULT_PET_NAME         = "Pet"
+
+SPORT_EMOJIS = ["🏸", "⚽", "🏀", "🎾", "🏈", "⚾", "🏐", "🏒", "🎱", "🏓", "⛳"]
 
 # ─────────────────────────────────────────────────────────────
 # Database
@@ -148,12 +154,18 @@ def _init_db(path: str = DB_PATH) -> sqlite3.Connection:
             pet_name      TEXT    NOT NULL DEFAULT 'Pet',
             experience    INTEGER NOT NULL DEFAULT 0,
             food          INTEGER NOT NULL DEFAULT 0,
-            last_cmd_food TEXT
+            last_cmd_food TEXT,
+            last_play     TEXT
         );
     """)
     # Migration: add passwords_used to existing databases that lack it
     try:
         conn.execute("ALTER TABLE reservations ADD COLUMN passwords_used INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE pets ADD COLUMN last_play TEXT")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -605,8 +617,8 @@ def _get_or_create_pet(conn: sqlite3.Connection, user_id: int, user_name: str) -
     if not row:
         conn.execute(
             "INSERT INTO pets (user_id, user_name, pet_name, experience, food, last_cmd_food) "
-            "VALUES (?, ?, 'Pet', 0, 0, NULL)",
-            (user_id, user_name),
+            "VALUES (?, ?, ?, 0, 0, NULL)",
+            (user_id, user_name, DEFAULT_PET_NAME),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM pets WHERE user_id=?", (user_id,)).fetchone()
@@ -617,6 +629,7 @@ def _get_or_create_pet(conn: sqlite3.Connection, user_id: int, user_name: str) -
         "experience":    row[3],
         "food":          row[4],
         "last_cmd_food": datetime.fromisoformat(row[5]) if row[5] else None,
+        "last_play":     datetime.fromisoformat(row[6]) if row[6] else None,
     }
 
 
@@ -740,6 +753,67 @@ def logic_whistle(
                 "xp":       recovery_xp,
             }
     return {"error": "not_found"}
+
+
+def logic_play(
+    conn: sqlite3.Connection,
+    user_id: int,
+    user_name: str,
+    with_pet_name: str,
+    now: datetime | None = None,
+) -> dict:
+    if now is None:
+        now = datetime.now()
+
+    if with_pet_name == DEFAULT_PET_NAME:
+        return {"error": "default_name"}
+
+    opp_rows = conn.execute(
+        "SELECT user_id, pet_name, experience FROM pets WHERE pet_name = ? AND user_id != ?",
+        (with_pet_name, user_id),
+    ).fetchall()
+    if not opp_rows:
+        return {"error": "opponent_not_found"}
+    opp_row = random.choice(opp_rows)
+    opponent = {
+        "pet_name": opp_row[1],
+        "emoji":    PET_TIERS[_pet_tier(opp_row[2])],
+    }
+
+    pet = _get_or_create_pet(conn, user_id, user_name)
+    if pet["last_play"] is not None:
+        elapsed = (now - pet["last_play"]).total_seconds()
+        if elapsed < PLAY_COOLDOWN_SECS:
+            remaining = int(PLAY_COOLDOWN_SECS - elapsed)
+            return {"error": "cooldown", "remaining_mins": remaining // 60, "remaining_secs": remaining % 60}
+
+    sport   = random.choice(SPORT_EMOJIS)
+    xp_gain = PLAY_XP_BADMINTON if sport == "🏸" else PLAY_XP_DEFAULT
+    old_xp  = pet["experience"]
+    new_xp  = old_xp + xp_gain
+    old_tier = _pet_tier(old_xp)
+    new_tier = _pet_tier(new_xp)
+    conn.execute(
+        "UPDATE pets SET experience = ?, last_play = ? WHERE user_id = ?",
+        (new_xp, now.isoformat(), user_id),
+    )
+    conn.commit()
+    return {
+        "error":      None,
+        "sport":      sport,
+        "xp_gain":    xp_gain,
+        "jackpot":    sport == "🏸",
+        "new_xp":     new_xp,
+        "old_tier":   old_tier,
+        "new_tier":   new_tier,
+        "grew":       new_tier > old_tier,
+        "old_emoji":  PET_TIERS[old_tier],
+        "new_emoji":  PET_TIERS[new_tier],
+        "xp_to_next": _xp_to_next_tier(new_xp),
+        "pet_name":   pet["pet_name"],
+        "at_max":     new_tier >= len(PET_TIERS) - 1,
+        "opponent":   opponent,
+    }
 
 
 def logic_rename(

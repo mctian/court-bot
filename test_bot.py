@@ -9,7 +9,7 @@ from logic import (
     logic_register, logic_cancel, logic_adduser,
     logic_addpassword, logic_listpasswords, logic_usepassword, logic_delete,
     logic_subscribe, logic_unsubscribe, _pop_subscribers_for_court,
-    logic_pet, logic_food, logic_feed, logic_whistle, logic_rename,
+    logic_pet, logic_food, logic_feed, logic_play, logic_whistle, logic_rename,
     delete_expired_passwords,
     _get_or_create_pet, _award_cmd_food,
     _pet_tier, _xp_for_tier, _xp_to_next_tier, _pet_hash,
@@ -18,6 +18,8 @@ from logic import (
     MAX_USERS_PER_RESERVATION, MAX_COURT_NUMBER, MAX_GROUPS_IN_FRONT,
     MAX_CREDENTIAL_LEN, MAX_PET_NAME_LEN,
     FOOD_PER_RESERVATION, FOOD_PER_PASSWORD, CMD_FOOD_COOLDOWN_SECS,
+    PLAY_COOLDOWN_SECS, PLAY_XP_BADMINTON, PLAY_XP_DEFAULT,
+    SPORT_EMOJIS, DEFAULT_PET_NAME,
 )
 
 
@@ -975,6 +977,142 @@ class TestLogicRename(unittest.TestCase):
         row = self.db.execute("SELECT pet_name FROM pets WHERE user_id=99").fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row[0], "Buddy")
+
+    def test_duplicate_names_allowed(self):
+        logic_rename(self.db, 1, "Alice", "Fluffy")
+        r = logic_rename(self.db, 2, "Bob", "Fluffy")
+        self.assertIsNone(r["error"])
+
+    def test_can_rename_to_default(self):
+        logic_rename(self.db, 1, "Alice", "Sparky")
+        r = logic_rename(self.db, 1, "Alice", DEFAULT_PET_NAME)
+        self.assertIsNone(r["error"])
+
+
+# ─────────────────────────────────────────────────────────────
+# logic_play
+# ─────────────────────────────────────────────────────────────
+class TestLogicPlay(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+        # Alice (user 1) with a named pet
+        _get_or_create_pet(self.db, 1, "Alice")
+        self.db.execute("UPDATE pets SET pet_name='Sparky' WHERE user_id=1")
+        # Bob (user 2) with a named pet
+        _get_or_create_pet(self.db, 2, "Bob")
+        self.db.execute("UPDATE pets SET pet_name='Rex' WHERE user_id=2")
+        self.db.commit()
+
+    def test_success_awards_xp(self):
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertIsNone(r["error"])
+        self.assertGreater(r["xp_gain"], 0)
+
+    def test_xp_persisted(self):
+        logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        xp = self.db.execute("SELECT experience FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertGreater(xp, 0)
+
+    def test_last_play_set(self):
+        now = datetime(2024, 6, 1, 12, 0, 0)
+        logic_play(self.db, 1, "Alice", with_pet_name="Rex", now=now)
+        val = self.db.execute("SELECT last_play FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(val, now.isoformat())
+
+    def test_opponent_last_play_not_updated(self):
+        logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        val = self.db.execute("SELECT last_play FROM pets WHERE user_id=2").fetchone()[0]
+        self.assertIsNone(val)
+
+    def test_cooldown_blocks_second_play(self):
+        now = datetime(2024, 6, 1, 12, 0, 0)
+        logic_play(self.db, 1, "Alice", with_pet_name="Rex", now=now)
+        soon = now + timedelta(seconds=PLAY_COOLDOWN_SECS - 1)
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex", now=soon)
+        self.assertEqual(r["error"], "cooldown")
+        self.assertGreater(r["remaining_mins"] * 60 + r["remaining_secs"], 0)
+
+    def test_play_allowed_after_cooldown(self):
+        now = datetime(2024, 6, 1, 12, 0, 0)
+        logic_play(self.db, 1, "Alice", with_pet_name="Rex", now=now)
+        later = now + timedelta(seconds=PLAY_COOLDOWN_SECS)
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex", now=later)
+        self.assertIsNone(r["error"])
+
+    def test_different_users_independent_cooldowns(self):
+        now = datetime(2024, 6, 1, 12, 0, 0)
+        logic_play(self.db, 1, "Alice", with_pet_name="Rex", now=now)
+        r = logic_play(self.db, 2, "Bob", with_pet_name="Sparky", now=now)
+        self.assertIsNone(r["error"])
+
+    def test_error_default_name(self):
+        r = logic_play(self.db, 1, "Alice", with_pet_name=DEFAULT_PET_NAME)
+        self.assertEqual(r["error"], "default_name")
+
+    def test_error_opponent_not_found(self):
+        r = logic_play(self.db, 1, "Alice", with_pet_name="NoSuchPet")
+        self.assertEqual(r["error"], "opponent_not_found")
+
+    def test_error_cannot_play_with_self(self):
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Sparky")
+        self.assertEqual(r["error"], "opponent_not_found")
+
+    def test_opponent_in_result(self):
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertIsNotNone(r["opponent"])
+        self.assertEqual(r["opponent"]["pet_name"], "Rex")
+
+    def test_opponent_emoji_matches_tier(self):
+        self.db.execute("UPDATE pets SET experience=? WHERE user_id=2", (_xp_for_tier(5),))
+        self.db.commit()
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertEqual(r["opponent"]["emoji"], PET_TIERS[5])
+
+    def test_sport_from_allowed_list(self):
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertIn(r["sport"], SPORT_EMOJIS)
+
+    def _force_sport(self, sport):
+        import random as _r
+        _real = _r.choice
+        return lambda seq: sport if seq == SPORT_EMOJIS else _real(seq)
+
+    def test_jackpot_on_badminton(self):
+        import unittest.mock
+        with unittest.mock.patch("logic.random.choice", side_effect=self._force_sport("🏸")):
+            r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertTrue(r["jackpot"])
+        self.assertEqual(r["xp_gain"], PLAY_XP_BADMINTON)
+
+    def test_default_xp_on_non_badminton(self):
+        import unittest.mock
+        with unittest.mock.patch("logic.random.choice", side_effect=self._force_sport("⚽")):
+            r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertFalse(r["jackpot"])
+        self.assertEqual(r["xp_gain"], PLAY_XP_DEFAULT)
+
+    def test_grew_flag_when_tier_increases(self):
+        self.db.execute("UPDATE pets SET experience=? WHERE user_id=1", (_xp_for_tier(1) - 1,))
+        self.db.commit()
+        import unittest.mock
+        with unittest.mock.patch("logic.random.choice", side_effect=self._force_sport("🏸")):
+            r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertTrue(r["grew"])
+
+    def test_duplicate_named_opponents_picks_one(self):
+        # Charlie (user 3) also named their pet "Rex"
+        _get_or_create_pet(self.db, 3, "Charlie")
+        self.db.execute("UPDATE pets SET pet_name='Rex' WHERE user_id=3")
+        self.db.commit()
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["opponent"]["pet_name"], "Rex")
+
+    def test_at_max_flag(self):
+        self.db.execute("UPDATE pets SET food=10000, experience=99999 WHERE user_id=1")
+        self.db.commit()
+        r = logic_play(self.db, 1, "Alice", with_pet_name="Rex")
+        self.assertTrue(r["at_max"])
 
 
 # ─────────────────────────────────────────────────────────────
