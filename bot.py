@@ -463,7 +463,7 @@ async def cmd_pet(interaction: discord.Interaction):
     await interaction.followup.send(
         f"🔑  Recovery code: `{r['hash']}`\n"
         f"🍖  Food on hand: **{r['food']}**  —  {feed_hint}\n"
-        f"To recover on another host: `/whistle {r['hash']} {r['emoji']}`\n"
+        f"To recover on another host: `/whistle {r['hash']}`\n"
         f"*(Code updates each time your pet evolves to a new tier. Food and partial XP are not recovered.)*",
         ephemeral=True,
     )
@@ -517,20 +517,14 @@ async def cmd_feed(interaction: discord.Interaction, amount: int | None = None):
 # /whistle
 # ─────────────────────────────────────────────────────────────
 @bot.tree.command(name="whistle", description="Recover your pet on this host using your recovery code from /pet")
-@app_commands.describe(
-    code     = "The 8-character recovery code shown in /pet",
-    pet_type = "Your pet's emoji exactly as shown in /pet (e.g. 🐱)",
-)
-async def cmd_whistle(interaction: discord.Interaction, code: str, pet_type: str):
-    result = logic_whistle(
-        db, interaction.user.id, interaction.user.display_name,
-        code.strip(), pet_type.strip(),
-    )
+@app_commands.checks.cooldown(1, 60, key=lambda i: i.user.id)
+@app_commands.describe(code="The 8-character recovery code shown in /pet")
+async def cmd_whistle(interaction: discord.Interaction, code: str):
+    result = logic_whistle(db, interaction.user.id, interaction.user.display_name, code.strip())
     if result["error"] == "not_found":
         await interaction.response.send_message(
             "🎵  No pet responded to your whistle.\n"
-            "*(Check that the code and pet emoji both match what `/pet` shows. "
-            "The code updates each time your pet evolves.)*",
+            "*(The code may be outdated — it updates each time your pet evolves. Use `/pet` for your current code.)*",
             ephemeral=True,
         )
         return

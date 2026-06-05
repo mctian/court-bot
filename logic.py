@@ -705,38 +705,31 @@ def logic_whistle(
     user_id: int,
     user_name: str,
     code: str,
-    pet_type: str,
 ) -> dict:
     """
-    Recovers a pet cross-database. The user provides their recovery code (from /pet)
-    and their pet's emoji. Food and partial XP within the tier are not recovered.
+    Recovers a pet cross-database using only the recovery code. Linearly scans all
+    48 tiers to find the one whose hash matches. Food and partial XP are not recovered.
     """
-    pet_type = pet_type.strip()
-    if pet_type not in PET_TIERS:
-        return {"error": "❌  Unknown pet type. Use the emoji shown in `/pet` (e.g. `🐱`)."}
-
-    tier = PET_TIERS.index(pet_type)
-    if _pet_hash(user_id, tier) != code:
-        return {"error": "not_found"}
-
-    # Valid — restore pet at the floor XP of this tier (no partial XP or food recovery)
-    recovery_xp = _xp_for_tier(tier)
-    existing = conn.execute("SELECT pet_name FROM pets WHERE user_id=?", (user_id,)).fetchone()
-    pet_name = existing[0] if existing else "Pet"
-    conn.execute(
-        "INSERT INTO pets (user_id, user_name, pet_name, experience, food) "
-        "VALUES (?, ?, ?, ?, 0) "
-        "ON CONFLICT(user_id) DO UPDATE SET experience=excluded.experience, food=0",
-        (user_id, user_name, pet_name, recovery_xp),
-    )
-    conn.commit()
-    return {
-        "error":    None,
-        "emoji":    pet_type,
-        "tier":     tier,
-        "pet_name": pet_name,
-        "xp":       recovery_xp,
-    }
+    for tier, emoji in enumerate(PET_TIERS):
+        if _pet_hash(user_id, tier) == code:
+            recovery_xp = _xp_for_tier(tier)
+            existing = conn.execute("SELECT pet_name FROM pets WHERE user_id=?", (user_id,)).fetchone()
+            pet_name = existing[0] if existing else "Pet"
+            conn.execute(
+                "INSERT INTO pets (user_id, user_name, pet_name, experience, food) "
+                "VALUES (?, ?, ?, ?, 0) "
+                "ON CONFLICT(user_id) DO UPDATE SET experience=excluded.experience, food=0",
+                (user_id, user_name, pet_name, recovery_xp),
+            )
+            conn.commit()
+            return {
+                "error":    None,
+                "emoji":    emoji,
+                "tier":     tier,
+                "pet_name": pet_name,
+                "xp":       recovery_xp,
+            }
+    return {"error": "not_found"}
 
 
 def logic_rename(

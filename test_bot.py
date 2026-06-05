@@ -850,34 +850,29 @@ class TestLogicWhistle(unittest.TestCase):
         db.execute("UPDATE pets SET experience=?, pet_name=? WHERE user_id=?", (xp, name, user_id))
         db.commit()
 
-    def test_valid_code_and_type_recovers(self):
+    def test_valid_code_recovers(self):
         self._make_pet_at_tier(self.db, 1, 3)
-        code = _pet_hash(1, 3)
-        r = logic_whistle(self.db, 1, "Alice", code, PET_TIERS[3])
+        r = logic_whistle(self.db, 1, "Alice", _pet_hash(1, 3))
         self.assertIsNone(r["error"])
         self.assertEqual(r["tier"], 3)
+        self.assertEqual(r["emoji"], PET_TIERS[3])
 
     def test_wrong_code_returns_not_found(self):
-        r = logic_whistle(self.db, 1, "Alice", "00000000", PET_TIERS[0])
+        r = logic_whistle(self.db, 1, "Alice", "00000000")
         self.assertEqual(r["error"], "not_found")
 
-    def test_wrong_pet_type_returns_not_found(self):
-        code = _pet_hash(1, 3)
-        r = logic_whistle(self.db, 1, "Alice", code, PET_TIERS[2])  # wrong tier
-        self.assertEqual(r["error"], "not_found")
-
-    def test_unknown_pet_type_returns_error(self):
-        r = logic_whistle(self.db, 1, "Alice", "00000000", "🤖")
-        self.assertIsNotNone(r["error"])
-        self.assertNotEqual(r["error"], "not_found")
+    def test_finds_correct_tier_via_linear_search(self):
+        # Code for tier 10 should resolve to tier 10 without any hint
+        code = _pet_hash(1, 10)
+        r = logic_whistle(self.db, 1, "Alice", code)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["tier"], 10)
 
     def test_recovery_sets_xp_to_tier_floor(self):
         self._make_pet_at_tier(self.db, 1, 5)
-        # Give extra XP within the tier
         self.db.execute("UPDATE pets SET experience=experience+10 WHERE user_id=1")
         self.db.commit()
-        code = _pet_hash(1, 5)
-        logic_whistle(self.db, 1, "Alice", code, PET_TIERS[5])
+        logic_whistle(self.db, 1, "Alice", _pet_hash(1, 5))
         xp = self.db.execute("SELECT experience FROM pets WHERE user_id=1").fetchone()[0]
         self.assertEqual(xp, _xp_for_tier(5))
 
@@ -885,19 +880,16 @@ class TestLogicWhistle(unittest.TestCase):
         self._make_pet_at_tier(self.db, 1, 2)
         self.db.execute("UPDATE pets SET food=50 WHERE user_id=1")
         self.db.commit()
-        code = _pet_hash(1, 2)
-        logic_whistle(self.db, 1, "Alice", code, PET_TIERS[2])
+        logic_whistle(self.db, 1, "Alice", _pet_hash(1, 2))
         food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
         self.assertEqual(food, 0)
 
     def test_code_stable_across_food_and_partial_xp_changes(self):
-        # Code should be the same regardless of food or XP within the same tier
         self._make_pet_at_tier(self.db, 1, 4)
-        code_before = _pet_hash(1, 4)
+        code = _pet_hash(1, 4)
         self.db.execute("UPDATE pets SET food=99, experience=experience+5 WHERE user_id=1")
         self.db.commit()
-        # Hash is still valid because tier hasn't changed
-        r = logic_whistle(self.db, 1, "Alice", code_before, PET_TIERS[4])
+        r = logic_whistle(self.db, 1, "Alice", code)
         self.assertIsNone(r["error"])
 
     def test_cross_database_recovery(self):
@@ -905,28 +897,30 @@ class TestLogicWhistle(unittest.TestCase):
         db_a = make_db()
         db_b = make_db()
 
-        # User builds up a tier-3 pet on db_a with lots of food and partial XP
         self._make_pet_at_tier(db_a, 42, 3, name="Sparky")
         db_a.execute("UPDATE pets SET food=100, experience=experience+15 WHERE user_id=42")
         db_a.commit()
 
-        # User notes their recovery code from /pet on db_a
         code = _pet_hash(42, 3)
-        emoji = PET_TIERS[3]
 
-        # db_b is a fresh host — user has no record there
         self.assertIsNone(db_b.execute("SELECT * FROM pets WHERE user_id=42").fetchone())
 
-        # User whistles on db_b
-        r = logic_whistle(db_b, 42, "Alice", code, emoji)
+        r = logic_whistle(db_b, 42, "Alice", code)
         self.assertIsNone(r["error"])
         self.assertEqual(r["tier"], 3)
 
-        # Pet exists on db_b at tier floor — no food, no partial XP
         row = db_b.execute("SELECT experience, food FROM pets WHERE user_id=42").fetchone()
         self.assertIsNotNone(row)
-        self.assertEqual(row[0], _xp_for_tier(3))  # floor XP, no partial
-        self.assertEqual(row[1], 0)                 # no food recovery
+        self.assertEqual(row[0], _xp_for_tier(3))
+        self.assertEqual(row[1], 0)
+
+    def test_all_tiers_resolvable(self):
+        """Every tier's hash must be uniquely resolvable via linear search."""
+        for tier in range(len(PET_TIERS)):
+            code = _pet_hash(999, tier)
+            r = logic_whistle(self.db, 999, "Test", code)
+            self.assertIsNone(r["error"])
+            self.assertEqual(r["tier"], tier)
 
 
 # ─────────────────────────────────────────────────────────────
