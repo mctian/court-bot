@@ -143,9 +143,8 @@ async def on_ready():
             bot.tree.copy_global_to(guild=GUILD)
             synced = await bot.tree.sync(guild=GUILD)
             print(f"   Synced {len(synced)} slash command(s) to guild {GUILD.id}.")
-        else:
-            synced = await bot.tree.sync()
-            print(f"   Synced {len(synced)} slash command(s) globally (may take up to 1 hour).")
+        synced = await bot.tree.sync()
+        print(f"   Synced {len(synced)} slash command(s) globally (may take up to 1 hour).")
     except Exception as exc:
         print(f"   Command sync error: {exc}")
     notification_loop.start()
