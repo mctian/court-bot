@@ -765,9 +765,6 @@ def logic_play(
     if now is None:
         now = datetime.now()
 
-    if with_pet_name == DEFAULT_PET_NAME:
-        return {"error": "default_name"}
-
     opp_rows = conn.execute(
         "SELECT user_id, pet_name, experience FROM pets WHERE pet_name = ? AND user_id != ?",
         (with_pet_name, user_id),

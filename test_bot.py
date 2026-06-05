@@ -1045,9 +1045,17 @@ class TestLogicPlay(unittest.TestCase):
         r = logic_play(self.db, 2, "Bob", with_pet_name="Sparky", now=now)
         self.assertIsNone(r["error"])
 
-    def test_error_default_name(self):
+    def test_default_name_allowed_when_others_have_it(self):
+        # Charlie (user 3) still has the default name "Pet"
+        _get_or_create_pet(self.db, 3, "Charlie")
         r = logic_play(self.db, 1, "Alice", with_pet_name=DEFAULT_PET_NAME)
-        self.assertEqual(r["error"], "default_name")
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["opponent"]["pet_name"], DEFAULT_PET_NAME)
+
+    def test_default_name_not_found_when_no_others_have_it(self):
+        # Users 1 and 2 both have custom names; no one has "Pet"
+        r = logic_play(self.db, 1, "Alice", with_pet_name=DEFAULT_PET_NAME)
+        self.assertEqual(r["error"], "opponent_not_found")
 
     def test_error_opponent_not_found(self):
         r = logic_play(self.db, 1, "Alice", with_pet_name="NoSuchPet")

@@ -517,7 +517,7 @@ async def cmd_feed(interaction: discord.Interaction, amount: int | None = None):
 # /play
 # ─────────────────────────────────────────────────────────────
 @bot.tree.command(name="play", description="Play a sport with another named pet to earn XP (once per 30 min)")
-@app_commands.describe(with_pet="Name of the pet to play against (must not be the default name)")
+@app_commands.describe(with_pet="Name of the pet to play against")
 async def cmd_play(interaction: discord.Interaction, with_pet: str):
     result = logic_play(db, interaction.user.id, interaction.user.display_name, with_pet_name=with_pet)
     if result["error"] == "cooldown":
@@ -525,12 +525,6 @@ async def cmd_play(interaction: discord.Interaction, with_pet: str):
         secs = result["remaining_secs"]
         await interaction.response.send_message(
             f"😴  Your pet is resting! Try again in **{mins}m {secs}s**.",
-            ephemeral=True,
-        )
-        return
-    if result["error"] == "default_name":
-        await interaction.response.send_message(
-            "❌  Specify a named pet — pets with the default name **Pet** don't count.",
             ephemeral=True,
         )
         return
