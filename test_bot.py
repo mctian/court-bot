@@ -602,24 +602,23 @@ class TestPetTierMath(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────
 class TestPetHash(unittest.TestCase):
     def test_returns_eight_chars(self):
-        h = _pet_hash("Fluffy", 10, 50)
-        self.assertEqual(len(h), 8)
+        self.assertEqual(len(_pet_hash(1, 5)), 8)
 
     def test_deterministic(self):
-        self.assertEqual(_pet_hash("A", 1, 1), _pet_hash("A", 1, 1))
+        self.assertEqual(_pet_hash(1, 5), _pet_hash(1, 5))
 
-    def test_changes_with_name(self):
-        self.assertNotEqual(_pet_hash("A", 1, 1), _pet_hash("B", 1, 1))
+    def test_changes_with_user_id(self):
+        self.assertNotEqual(_pet_hash(1, 5), _pet_hash(2, 5))
 
-    def test_changes_with_food(self):
-        self.assertNotEqual(_pet_hash("A", 1, 1), _pet_hash("A", 2, 1))
-
-    def test_changes_with_xp(self):
-        self.assertNotEqual(_pet_hash("A", 1, 1), _pet_hash("A", 1, 2))
+    def test_changes_with_tier(self):
+        self.assertNotEqual(_pet_hash(1, 5), _pet_hash(1, 6))
 
     def test_hex_only(self):
-        h = _pet_hash("Pet", 0, 0)
-        self.assertTrue(all(c in "0123456789abcdef" for c in h))
+        self.assertTrue(all(c in "0123456789abcdef" for c in _pet_hash(1, 0)))
+
+    def test_stable_regardless_of_food_or_partial_xp(self):
+        # Hash only depends on user_id and tier, not food or XP within the tier
+        self.assertEqual(_pet_hash(42, 3), _pet_hash(42, 3))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -712,6 +711,10 @@ class TestLogicPet(unittest.TestCase):
     def test_hash_is_eight_chars(self):
         r = logic_pet(self.db, 1, "Alice")
         self.assertEqual(len(r["hash"]), 8)
+
+    def test_hash_matches_pet_hash_function(self):
+        r = logic_pet(self.db, 1, "Alice")
+        self.assertEqual(r["hash"], _pet_hash(1, r["tier"]))
 
     def test_xp_to_next_at_zero(self):
         r = logic_pet(self.db, 1, "Alice")
@@ -840,38 +843,90 @@ class TestLogicFeed(unittest.TestCase):
 class TestLogicWhistle(unittest.TestCase):
     def setUp(self):
         self.db = make_db()
-        _get_or_create_pet(self.db, 1, "Alice")
 
-    def _current_hash(self, user_id=1):
-        p = _get_or_create_pet(self.db, user_id, "Alice")
-        return _pet_hash(p["pet_name"], p["food"], p["experience"])
+    def _make_pet_at_tier(self, db, user_id, tier, name="Pet"):
+        _get_or_create_pet(db, user_id, "Alice")
+        xp = _xp_for_tier(tier)
+        db.execute("UPDATE pets SET experience=?, pet_name=? WHERE user_id=?", (xp, name, user_id))
+        db.commit()
 
-    def test_own_pet_returns_own_status(self):
-        code = self._current_hash()
-        r = logic_whistle(self.db, 1, "Alice", code)
+    def test_valid_code_and_type_recovers(self):
+        self._make_pet_at_tier(self.db, 1, 3)
+        code = _pet_hash(1, 3)
+        r = logic_whistle(self.db, 1, "Alice", code, PET_TIERS[3])
         self.assertIsNone(r["error"])
-        self.assertEqual(r["status"], "own")
+        self.assertEqual(r["tier"], 3)
 
-    def test_not_found_with_bad_code(self):
-        r = logic_whistle(self.db, 1, "Alice", "00000000")
+    def test_wrong_code_returns_not_found(self):
+        r = logic_whistle(self.db, 1, "Alice", "00000000", PET_TIERS[0])
         self.assertEqual(r["error"], "not_found")
 
-    def test_recover_transfers_pet(self):
-        # User 2 tries to claim user 1's pet via its code
-        code = self._current_hash(user_id=1)
-        r = logic_whistle(self.db, 2, "Bob", code)
-        self.assertIsNone(r["error"])
-        self.assertEqual(r["status"], "recovered")
-        # Pet row should now belong to user 2
-        owner = self.db.execute("SELECT user_id FROM pets WHERE pet_name='Pet'").fetchone()[0]
-        self.assertEqual(owner, 2)
+    def test_wrong_pet_type_returns_not_found(self):
+        code = _pet_hash(1, 3)
+        r = logic_whistle(self.db, 1, "Alice", code, PET_TIERS[2])  # wrong tier
+        self.assertEqual(r["error"], "not_found")
 
-    def test_code_changes_after_food_changes(self):
-        code_before = self._current_hash()
-        self.db.execute("UPDATE pets SET food=10 WHERE user_id=1")
+    def test_unknown_pet_type_returns_error(self):
+        r = logic_whistle(self.db, 1, "Alice", "00000000", "🤖")
+        self.assertIsNotNone(r["error"])
+        self.assertNotEqual(r["error"], "not_found")
+
+    def test_recovery_sets_xp_to_tier_floor(self):
+        self._make_pet_at_tier(self.db, 1, 5)
+        # Give extra XP within the tier
+        self.db.execute("UPDATE pets SET experience=experience+10 WHERE user_id=1")
         self.db.commit()
-        r = logic_whistle(self.db, 1, "Alice", code_before)
-        self.assertEqual(r["error"], "not_found")
+        code = _pet_hash(1, 5)
+        logic_whistle(self.db, 1, "Alice", code, PET_TIERS[5])
+        xp = self.db.execute("SELECT experience FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(xp, _xp_for_tier(5))
+
+    def test_recovery_sets_food_to_zero(self):
+        self._make_pet_at_tier(self.db, 1, 2)
+        self.db.execute("UPDATE pets SET food=50 WHERE user_id=1")
+        self.db.commit()
+        code = _pet_hash(1, 2)
+        logic_whistle(self.db, 1, "Alice", code, PET_TIERS[2])
+        food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(food, 0)
+
+    def test_code_stable_across_food_and_partial_xp_changes(self):
+        # Code should be the same regardless of food or XP within the same tier
+        self._make_pet_at_tier(self.db, 1, 4)
+        code_before = _pet_hash(1, 4)
+        self.db.execute("UPDATE pets SET food=99, experience=experience+5 WHERE user_id=1")
+        self.db.commit()
+        # Hash is still valid because tier hasn't changed
+        r = logic_whistle(self.db, 1, "Alice", code_before, PET_TIERS[4])
+        self.assertIsNone(r["error"])
+
+    def test_cross_database_recovery(self):
+        """A pet created on db_a can be recovered on a fresh db_b using only the hash."""
+        db_a = make_db()
+        db_b = make_db()
+
+        # User builds up a tier-3 pet on db_a with lots of food and partial XP
+        self._make_pet_at_tier(db_a, 42, 3, name="Sparky")
+        db_a.execute("UPDATE pets SET food=100, experience=experience+15 WHERE user_id=42")
+        db_a.commit()
+
+        # User notes their recovery code from /pet on db_a
+        code = _pet_hash(42, 3)
+        emoji = PET_TIERS[3]
+
+        # db_b is a fresh host — user has no record there
+        self.assertIsNone(db_b.execute("SELECT * FROM pets WHERE user_id=42").fetchone())
+
+        # User whistles on db_b
+        r = logic_whistle(db_b, 42, "Alice", code, emoji)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["tier"], 3)
+
+        # Pet exists on db_b at tier floor — no food, no partial XP
+        row = db_b.execute("SELECT experience, food FROM pets WHERE user_id=42").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], _xp_for_tier(3))  # floor XP, no partial
+        self.assertEqual(row[1], 0)                 # no food recovery
 
 
 # ─────────────────────────────────────────────────────────────

@@ -584,10 +584,10 @@ def _xp_to_next_tier(xp: int) -> int:
     return _xp_for_tier(tier + 1) - xp
 
 
-def _pet_hash(pet_name: str, food: int, xp: int) -> str:
-    """8-char hex recovery code based on pet state (not user_id, so it survives account changes)."""
-    data = f"{pet_name}:{food}:{xp}"
-    return hashlib.sha256(data.encode()).hexdigest()[:8]
+def _pet_hash(user_id: int, tier: int) -> str:
+    """8-char hex recovery code. Encodes user_id + tier so it's stable within a tier
+    and valid across database instances (Discord user IDs are global)."""
+    return hashlib.sha256(f"{user_id}:{tier}".encode()).hexdigest()[:8]
 
 
 def _get_or_create_pet(conn: sqlite3.Connection, user_id: int, user_name: str) -> dict:
@@ -640,7 +640,7 @@ def logic_pet(conn: sqlite3.Connection, user_id: int, user_name: str) -> dict:
     xp    = pet["experience"]
     tier  = _pet_tier(xp)
     emoji = PET_TIERS[tier]
-    h     = _pet_hash(pet["pet_name"], pet["food"], xp)
+    h     = _pet_hash(user_id, tier)
     return {
         "error":      None,
         "pet_name":   pet["pet_name"],
@@ -705,39 +705,38 @@ def logic_whistle(
     user_id: int,
     user_name: str,
     code: str,
+    pet_type: str,
 ) -> dict:
-    rows = conn.execute("SELECT * FROM pets").fetchall()
-    for row in rows:
-        p = {
-            "user_id":    row[0],
-            "user_name":  row[1],
-            "pet_name":   row[2],
-            "experience": row[3],
-            "food":       row[4],
-        }
-        if _pet_hash(p["pet_name"], p["food"], p["experience"]) == code:
-            tier  = _pet_tier(p["experience"])
-            emoji = PET_TIERS[tier]
-            if p["user_id"] == user_id:
-                return {
-                    "error":    None,
-                    "status":   "own",
-                    "pet_name": p["pet_name"],
-                    "emoji":    emoji,
-                }
-            # Transfer ownership to calling user
-            conn.execute(
-                "UPDATE pets SET user_id = ?, user_name = ? WHERE user_id = ?",
-                (user_id, user_name, p["user_id"]),
-            )
-            conn.commit()
-            return {
-                "error":    None,
-                "status":   "recovered",
-                "pet_name": p["pet_name"],
-                "emoji":    emoji,
-            }
-    return {"error": "not_found"}
+    """
+    Recovers a pet cross-database. The user provides their recovery code (from /pet)
+    and their pet's emoji. Food and partial XP within the tier are not recovered.
+    """
+    pet_type = pet_type.strip()
+    if pet_type not in PET_TIERS:
+        return {"error": "❌  Unknown pet type. Use the emoji shown in `/pet` (e.g. `🐱`)."}
+
+    tier = PET_TIERS.index(pet_type)
+    if _pet_hash(user_id, tier) != code:
+        return {"error": "not_found"}
+
+    # Valid — restore pet at the floor XP of this tier (no partial XP or food recovery)
+    recovery_xp = _xp_for_tier(tier)
+    existing = conn.execute("SELECT pet_name FROM pets WHERE user_id=?", (user_id,)).fetchone()
+    pet_name = existing[0] if existing else "Pet"
+    conn.execute(
+        "INSERT INTO pets (user_id, user_name, pet_name, experience, food) "
+        "VALUES (?, ?, ?, ?, 0) "
+        "ON CONFLICT(user_id) DO UPDATE SET experience=excluded.experience, food=0",
+        (user_id, user_name, pet_name, recovery_xp),
+    )
+    conn.commit()
+    return {
+        "error":    None,
+        "emoji":    pet_type,
+        "tier":     tier,
+        "pet_name": pet_name,
+        "xp":       recovery_xp,
+    }
 
 
 def logic_rename(

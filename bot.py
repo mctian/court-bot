@@ -460,10 +460,10 @@ async def cmd_pet(interaction: discord.Interaction):
     embed.add_field(name="Progress", value=bar,                                         inline=False)
     await interaction.response.send_message(embed=embed)
     await interaction.followup.send(
-        f"🔑  Your recovery code: `{r['hash']}`\n"
+        f"🔑  Recovery code: `{r['hash']}`\n"
         f"🍖  Food on hand: **{r['food']}**\n"
-        f"Use `/whistle {r['hash']}` to recover this pet if you ever lose it.\n"
-        f"*(This code changes whenever your food or XP changes — check /pet for the latest.)*",
+        f"To recover on another host: `/whistle {r['hash']} {r['emoji']}`\n"
+        f"*(Code updates each time your pet evolves to a new tier. Food and partial XP are not recovered.)*",
         ephemeral=True,
     )
 
@@ -515,14 +515,21 @@ async def cmd_feed(interaction: discord.Interaction, amount: int | None = None):
 # ─────────────────────────────────────────────────────────────
 # /whistle
 # ─────────────────────────────────────────────────────────────
-@bot.tree.command(name="whistle", description="Recover your pet using a recovery code from /pet")
-@app_commands.describe(code="The 8-character recovery code shown at the bottom of /pet")
-async def cmd_whistle(interaction: discord.Interaction, code: str):
-    result = logic_whistle(db, interaction.user.id, interaction.user.display_name, code.strip())
+@bot.tree.command(name="whistle", description="Recover your pet on this host using your recovery code from /pet")
+@app_commands.describe(
+    code     = "The 8-character recovery code shown in /pet",
+    pet_type = "Your pet's emoji exactly as shown in /pet (e.g. 🐱)",
+)
+async def cmd_whistle(interaction: discord.Interaction, code: str, pet_type: str):
+    result = logic_whistle(
+        db, interaction.user.id, interaction.user.display_name,
+        code.strip(), pet_type.strip(),
+    )
     if result["error"] == "not_found":
         await interaction.response.send_message(
             "🎵  No pet responded to your whistle.\n"
-            "*(The code may be outdated — it changes whenever food or XP changes. Use /pet for your current code.)*",
+            "*(Check that the code and pet emoji both match what `/pet` shows. "
+            "The code updates each time your pet evolves.)*",
             ephemeral=True,
         )
         return
@@ -530,16 +537,12 @@ async def cmd_whistle(interaction: discord.Interaction, code: str):
         await interaction.response.send_message(result["error"], ephemeral=True)
         return
 
-    if result["status"] == "own":
-        await interaction.response.send_message(
-            f"🎵  **{result['pet_name']}** {result['emoji']} comes running back to you! Your pet is safe.",
-            ephemeral=True,
-        )
-    else:
-        await interaction.response.send_message(
-            f"🎵  **{result['pet_name']}** {result['emoji']} has been recovered and is now yours!",
-            ephemeral=True,
-        )
+    await interaction.response.send_message(
+        f"🎵  **{result['pet_name']}** {result['emoji']} has been recovered!\n"
+        f"Tier **{result['tier']}** restored · Food and partial XP were not carried over.\n"
+        f"Use `/feed` to keep growing!",
+        ephemeral=True,
+    )
 
 # ─────────────────────────────────────────────────────────────
 # /rename
