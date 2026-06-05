@@ -459,9 +459,10 @@ async def cmd_pet(interaction: discord.Interaction):
     embed.add_field(name="Total XP", value=str(r["xp"]),                               inline=True)
     embed.add_field(name="Progress", value=bar,                                         inline=False)
     await interaction.response.send_message(embed=embed)
+    feed_hint = f"Use `/feed` to give it to **{r['pet_name']}**!" if r["food"] > 0 else "Earn food by making reservations, assigning passwords, or using commands!"
     await interaction.followup.send(
         f"🔑  Recovery code: `{r['hash']}`\n"
-        f"🍖  Food on hand: **{r['food']}**\n"
+        f"🍖  Food on hand: **{r['food']}**  —  {feed_hint}\n"
         f"To recover on another host: `/whistle {r['hash']} {r['emoji']}`\n"
         f"*(Code updates each time your pet evolves to a new tier. Food and partial XP are not recovered.)*",
         ephemeral=True,
