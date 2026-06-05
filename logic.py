@@ -751,7 +751,8 @@ def logic_rename(
     if len(new_name) > MAX_PET_NAME_LEN:
         return {"error": f"❌  Name must be {MAX_PET_NAME_LEN} characters or fewer."}
     new_name = _clean(new_name, max_len=MAX_PET_NAME_LEN)
-    _get_or_create_pet(conn, user_id, user_name)
+    pet = _get_or_create_pet(conn, user_id, user_name)
     conn.execute("UPDATE pets SET pet_name = ? WHERE user_id = ?", (new_name, user_id))
     conn.commit()
-    return {"error": None, "pet_name": new_name}
+    emoji = PET_TIERS[_pet_tier(pet["experience"])]
+    return {"error": None, "pet_name": new_name, "emoji": emoji}

@@ -503,9 +503,9 @@ async def cmd_feed(interaction: discord.Interaction, amount: int | None = None):
 
     r   = result
     bar = _xp_bar(r["new_xp"])
-    lines = [f"You fed **{r['pet_name']}** **{r['fed']}×** {r['food_emoji']}!"]
+    lines = [f"You fed **{r['pet_name']}** {r['old_emoji']} **{r['fed']}×** {r['food_emoji']}!"]
     if r["grew"]:
-        lines.append(f"✨  **{r['pet_name']} grew into a {r['new_emoji']}!**  (Tier {r['old_tier']} → {r['new_tier']})")
+        lines.append(f"✨  **{r['pet_name']}** {r['new_emoji']} evolved!  (Tier {r['old_tier']} → {r['new_tier']})")
     lines.append(f"📊  {bar}")
     lines.append(f"🍖  Food remaining: **{r['food_left']}**")
     if r["at_max"]:
@@ -557,7 +557,7 @@ async def cmd_rename(interaction: discord.Interaction, name: str):
     got_food  = _award_cmd_food(db, interaction.user.id, interaction.user.display_name)
     food_line = "  🍖 +1 food earned!" if got_food else ""
     await interaction.response.send_message(
-        f"✅  Your pet is now named **{result['pet_name']}**!{food_line}",
+        f"✅  Your pet is now named **{result['pet_name']}** {result['emoji']}!{food_line}",
         ephemeral=True,
     )
 
