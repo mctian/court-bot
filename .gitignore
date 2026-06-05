@@ -1,4 +1,7 @@
 .env
 __pycache__/
 *.pyc
-court_bot.db
+*.db
+*.db-shm
+*.db-wal
+*.db-journal

@@ -2,7 +2,9 @@
 Pure logic layer — no Discord imports, safe to unit-test directly.
 """
 
+import hashlib
 import json
+import random
 import re
 import sqlite3
 from datetime import datetime, timedelta, time as dt_time
@@ -29,6 +31,77 @@ MAX_USERS_PER_RESERVATION = 4
 DB_PATH = "court_bot.db"
 
 # ─────────────────────────────────────────────────────────────
+# Pet Constants
+# ─────────────────────────────────────────────────────────────
+# Ordered from most common/simple → rarest/legendary.
+# Tier N requires cumulative XP = 10 * N * (N+1): 0, 20, 60, 120, 200, 300 …
+PET_TIERS = [
+    "🌱",  # 0  Seedling
+    "🐛",  # 1  Caterpillar
+    "🐌",  # 2  Snail
+    "🐝",  # 3  Bee
+    "🐞",  # 4  Ladybug
+    "🐜",  # 5  Ant
+    "🐭",  # 6  Mouse
+    "🐹",  # 7  Hamster
+    "🐇",  # 8  Rabbit
+    "🦔",  # 9  Hedgehog
+    "🐿️", # 10 Chipmunk
+    "🐱",  # 11 Cat
+    "🐶",  # 12 Dog
+    "🐸",  # 13 Frog
+    "🐔",  # 14 Chicken
+    "🐮",  # 15 Cow
+    "🐷",  # 16 Pig
+    "🐑",  # 17 Sheep
+    "🦆",  # 18 Duck
+    "🐧",  # 19 Penguin
+    "🦊",  # 20 Fox
+    "🐻",  # 21 Bear
+    "🐨",  # 22 Koala
+    "🐼",  # 23 Panda
+    "🦘",  # 24 Kangaroo
+    "🐯",  # 25 Tiger
+    "🦁",  # 26 Lion
+    "🐺",  # 27 Wolf
+    "🦝",  # 28 Raccoon
+    "🦜",  # 29 Parrot
+    "🦉",  # 30 Owl
+    "🦅",  # 31 Eagle
+    "🦚",  # 32 Peacock
+    "🦩",  # 33 Flamingo
+    "🐬",  # 34 Dolphin
+    "🦈",  # 35 Shark
+    "🐙",  # 36 Octopus
+    "🦑",  # 37 Squid
+    "🐋",  # 38 Whale
+    "🦋",  # 39 Butterfly
+    "🦎",  # 40 Lizard
+    "🐢",  # 41 Turtle
+    "🐍",  # 42 Snake
+    "🦕",  # 43 Sauropod
+    "🦖",  # 44 T-Rex
+    "🦄",  # 45 Unicorn
+    "🐲",  # 46 Dragon
+    "🐉",  # 47 Dragon (legendary)
+]
+
+FOOD_EMOJIS = [
+    "🍎", "🍊", "🍋", "🍇", "🍓", "🫐", "🍑", "🥭", "🍍", "🥥",
+    "🍆", "🥦", "🥕", "🌽", "🥩", "🍗", "🍖", "🦐", "🦀", "🌮",
+    "🍜", "🍣", "🍕", "🍰", "🎂", "🍩", "🍪", "🍫", "🧁", "🥐",
+    "🧀", "🥚", "🍳", "🥞", "🍞", "🥗", "🍲", "🍛", "🍱", "🍦",
+    "🍧", "🍨", "🍡", "🥜", "🍿", "🥝", "🍒", "🍈", "🥑", "🌶️",
+]
+
+FOOD_PER_RESERVATION     = 20
+FOOD_PER_PASSWORD        = 5
+FOOD_PER_CMD             = 1
+CMD_FOOD_COOLDOWN_SECS   = 60
+MIN_PASSWORDS_FOR_NEW_RES = 2
+MAX_PET_NAME_LEN         = 32
+
+# ─────────────────────────────────────────────────────────────
 # Database
 # ─────────────────────────────────────────────────────────────
 def _init_db(path: str = DB_PATH) -> sqlite3.Connection:
@@ -36,18 +109,19 @@ def _init_db(path: str = DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS reservations (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id       INTEGER NOT NULL,
-            user_name     TEXT    NOT NULL,
-            channel_id    INTEGER NOT NULL,
-            court_number  INTEGER NOT NULL,
-            registered_at TEXT    NOT NULL,
-            start_time    TEXT    NOT NULL,
-            end_time      TEXT    NOT NULL,
-            users         TEXT    NOT NULL DEFAULT '[]',
-            password_id   INTEGER,
-            notified_2min INTEGER NOT NULL DEFAULT 0,
-            active        INTEGER NOT NULL DEFAULT 1
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id        INTEGER NOT NULL,
+            user_name      TEXT    NOT NULL,
+            channel_id     INTEGER NOT NULL,
+            court_number   INTEGER NOT NULL,
+            registered_at  TEXT    NOT NULL,
+            start_time     TEXT    NOT NULL,
+            end_time       TEXT    NOT NULL,
+            users          TEXT    NOT NULL DEFAULT '[]',
+            password_id    INTEGER,
+            notified_2min  INTEGER NOT NULL DEFAULT 0,
+            active         INTEGER NOT NULL DEFAULT 1,
+            passwords_used INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS passwords (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +137,21 @@ def _init_db(path: str = DB_PATH) -> sqlite3.Connection:
             court_number INTEGER,
             created_at   TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS pets (
+            user_id       INTEGER PRIMARY KEY,
+            user_name     TEXT    NOT NULL,
+            pet_name      TEXT    NOT NULL DEFAULT 'Pet',
+            experience    INTEGER NOT NULL DEFAULT 0,
+            food          INTEGER NOT NULL DEFAULT 0,
+            last_cmd_food TEXT
+        );
     """)
+    # Migration: add passwords_used to existing databases that lack it
+    try:
+        conn.execute("ALTER TABLE reservations ADD COLUMN passwords_used INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     return conn
 
@@ -72,18 +160,19 @@ def _init_db(path: str = DB_PATH) -> sqlite3.Connection:
 # ─────────────────────────────────────────────────────────────
 def _row_to_res(row) -> dict:
     return {
-        "id":            row[0],
-        "user_id":       row[1],
-        "user_name":     row[2],
-        "channel_id":    row[3],
-        "court_number":  row[4],
-        "registered_at": datetime.fromisoformat(row[5]),
-        "start_time":    datetime.fromisoformat(row[6]),
-        "end_time":      datetime.fromisoformat(row[7]),
-        "users":         json.loads(row[8]),
-        "password_id":   row[9],
-        "notified_2min": bool(row[10]),
-        "active":        bool(row[11]),
+        "id":             row[0],
+        "user_id":        row[1],
+        "user_name":      row[2],
+        "channel_id":     row[3],
+        "court_number":   row[4],
+        "registered_at":  datetime.fromisoformat(row[5]),
+        "start_time":     datetime.fromisoformat(row[6]),
+        "end_time":       datetime.fromisoformat(row[7]),
+        "users":          json.loads(row[8]),
+        "password_id":    row[9],
+        "notified_2min":  bool(row[10]),
+        "active":         bool(row[11]),
+        "passwords_used": row[12] if len(row) > 12 else 0,
     }
 
 def _row_to_pw(row) -> dict:
@@ -174,6 +263,13 @@ def logic_register(
     if active_count >= MAX_ACTIVE_RESERVATIONS:
         return {"error": f"❌  Reservation list is full ({MAX_ACTIVE_RESERVATIONS} active). Wait for slots to expire."}
 
+    last_res = conn.execute(
+        "SELECT passwords_used FROM reservations WHERE user_id=? ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if last_res is not None and last_res[0] < MIN_PASSWORDS_FOR_NEW_RES:
+        return {"error": "REMIND"}
+
     if now is None:
         now = datetime.now()
     wait_mins  = time_remaining + groups_in_front * SLOT_DURATION_MINS
@@ -187,13 +283,16 @@ def logic_register(
         (user_id, user_name, channel_id, court_number, now.isoformat(),
          start_time.isoformat(), end_time.isoformat(), json.dumps([]))
     )
+    _get_or_create_pet(conn, user_id, user_name)
+    conn.execute("UPDATE pets SET food = food + ? WHERE user_id = ?", (FOOD_PER_RESERVATION, user_id))
     conn.commit()
     return {
-        "error": None,
-        "res_id": cur.lastrowid,
-        "start_time": start_time,
-        "end_time": end_time,
-        "wait_mins": wait_mins,
+        "error":        None,
+        "res_id":       cur.lastrowid,
+        "start_time":   start_time,
+        "end_time":     end_time,
+        "wait_mins":    wait_mins,
+        "food_awarded": FOOD_PER_RESERVATION,
     }
 
 
@@ -341,8 +440,19 @@ def logic_usepassword(
         }
 
     conn.execute("UPDATE reservations SET password_id=? WHERE id=?", (pw["id"], reservation_id))
+    conn.execute(
+        "UPDATE reservations SET passwords_used = passwords_used + 1 WHERE id=?",
+        (reservation_id,),
+    )
+    _get_or_create_pet(conn, caller_user_id, "")
+    conn.execute("UPDATE pets SET food = food + ? WHERE user_id = ?", (FOOD_PER_PASSWORD, caller_user_id))
     conn.commit()
-    return {"error": None, "pw_username": pw["username"], "court_number": r["court_number"]}
+    return {
+        "error":        None,
+        "pw_username":  pw["username"],
+        "court_number": r["court_number"],
+        "food_awarded": FOOD_PER_PASSWORD,
+    }
 
 
 def logic_delete(
@@ -418,3 +528,202 @@ def _pop_subscribers_for_court(
         conn.execute(f"DELETE FROM subscribers WHERE id IN ({placeholders})", [r[0] for r in rows])
         conn.commit()
     return [{"user_id": r[1]} for r in rows]
+
+
+# ─────────────────────────────────────────────────────────────
+# Pet Helpers
+# ─────────────────────────────────────────────────────────────
+
+def _pet_tier(xp: int) -> int:
+    """Returns the tier index (0–47) for the given cumulative XP."""
+    tier = 0
+    while tier + 1 < len(PET_TIERS) and xp >= 10 * (tier + 1) * (tier + 2):
+        tier += 1
+    return tier
+
+
+def _xp_for_tier(n: int) -> int:
+    """Cumulative XP required to reach tier n."""
+    return 10 * n * (n + 1)
+
+
+def _xp_to_next_tier(xp: int) -> int:
+    """XP still needed to reach the next tier (0 if already at max)."""
+    tier = _pet_tier(xp)
+    if tier >= len(PET_TIERS) - 1:
+        return 0
+    return _xp_for_tier(tier + 1) - xp
+
+
+def _pet_hash(pet_name: str, food: int, xp: int) -> str:
+    """8-char hex recovery code based on pet state (not user_id, so it survives account changes)."""
+    data = f"{pet_name}:{food}:{xp}"
+    return hashlib.sha256(data.encode()).hexdigest()[:8]
+
+
+def _get_or_create_pet(conn: sqlite3.Connection, user_id: int, user_name: str) -> dict:
+    row = conn.execute("SELECT * FROM pets WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        conn.execute(
+            "INSERT INTO pets (user_id, user_name, pet_name, experience, food, last_cmd_food) "
+            "VALUES (?, ?, 'Pet', 0, 0, NULL)",
+            (user_id, user_name),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM pets WHERE user_id=?", (user_id,)).fetchone()
+    return {
+        "user_id":       row[0],
+        "user_name":     row[1],
+        "pet_name":      row[2],
+        "experience":    row[3],
+        "food":          row[4],
+        "last_cmd_food": datetime.fromisoformat(row[5]) if row[5] else None,
+    }
+
+
+def _award_cmd_food(
+    conn: sqlite3.Connection,
+    user_id: int,
+    user_name: str,
+    now: datetime | None = None,
+) -> bool:
+    """Award 1 food if the per-minute cooldown has elapsed. Returns True if food was given."""
+    if now is None:
+        now = datetime.now()
+    pet = _get_or_create_pet(conn, user_id, user_name)
+    if pet["last_cmd_food"] is not None:
+        if (now - pet["last_cmd_food"]).total_seconds() < CMD_FOOD_COOLDOWN_SECS:
+            return False
+    conn.execute(
+        "UPDATE pets SET food = food + 1, last_cmd_food = ? WHERE user_id = ?",
+        (now.isoformat(), user_id),
+    )
+    conn.commit()
+    return True
+
+
+# ─────────────────────────────────────────────────────────────
+# Pet Command Logic
+# ─────────────────────────────────────────────────────────────
+
+def logic_pet(conn: sqlite3.Connection, user_id: int, user_name: str) -> dict:
+    pet   = _get_or_create_pet(conn, user_id, user_name)
+    xp    = pet["experience"]
+    tier  = _pet_tier(xp)
+    emoji = PET_TIERS[tier]
+    h     = _pet_hash(pet["pet_name"], pet["food"], xp)
+    return {
+        "error":      None,
+        "pet_name":   pet["pet_name"],
+        "emoji":      emoji,
+        "tier":       tier,
+        "xp":         xp,
+        "food":       pet["food"],
+        "xp_to_next": _xp_to_next_tier(xp),
+        "hash":       h,
+        "at_max":     tier >= len(PET_TIERS) - 1,
+    }
+
+
+def logic_food(conn: sqlite3.Connection, user_id: int, user_name: str) -> dict:
+    pet = _get_or_create_pet(conn, user_id, user_name)
+    return {"error": None, "food": pet["food"]}
+
+
+def logic_feed(
+    conn: sqlite3.Connection,
+    user_id: int,
+    user_name: str,
+    amount: int | None = None,
+) -> dict:
+    pet = _get_or_create_pet(conn, user_id, user_name)
+    if pet["food"] <= 0:
+        return {"error": "no_food"}
+    if amount is not None and amount <= 0:
+        return {"error": "❌  Amount must be at least 1."}
+
+    actual    = pet["food"] if amount is None else min(amount, pet["food"])
+    old_xp    = pet["experience"]
+    old_tier  = _pet_tier(old_xp)
+    new_xp    = old_xp + actual
+    new_tier  = _pet_tier(new_xp)
+
+    conn.execute(
+        "UPDATE pets SET food = food - ?, experience = experience + ? WHERE user_id = ?",
+        (actual, actual, user_id),
+    )
+    conn.commit()
+
+    return {
+        "error":      None,
+        "fed":        actual,
+        "food_emoji": random.choice(FOOD_EMOJIS),
+        "old_tier":   old_tier,
+        "new_tier":   new_tier,
+        "old_emoji":  PET_TIERS[old_tier],
+        "new_emoji":  PET_TIERS[new_tier],
+        "grew":       new_tier > old_tier,
+        "new_xp":     new_xp,
+        "food_left":  pet["food"] - actual,
+        "xp_to_next": _xp_to_next_tier(new_xp),
+        "pet_name":   pet["pet_name"],
+        "at_max":     new_tier >= len(PET_TIERS) - 1,
+    }
+
+
+def logic_whistle(
+    conn: sqlite3.Connection,
+    user_id: int,
+    user_name: str,
+    code: str,
+) -> dict:
+    rows = conn.execute("SELECT * FROM pets").fetchall()
+    for row in rows:
+        p = {
+            "user_id":    row[0],
+            "user_name":  row[1],
+            "pet_name":   row[2],
+            "experience": row[3],
+            "food":       row[4],
+        }
+        if _pet_hash(p["pet_name"], p["food"], p["experience"]) == code:
+            tier  = _pet_tier(p["experience"])
+            emoji = PET_TIERS[tier]
+            if p["user_id"] == user_id:
+                return {
+                    "error":    None,
+                    "status":   "own",
+                    "pet_name": p["pet_name"],
+                    "emoji":    emoji,
+                }
+            # Transfer ownership to calling user
+            conn.execute(
+                "UPDATE pets SET user_id = ?, user_name = ? WHERE user_id = ?",
+                (user_id, user_name, p["user_id"]),
+            )
+            conn.commit()
+            return {
+                "error":    None,
+                "status":   "recovered",
+                "pet_name": p["pet_name"],
+                "emoji":    emoji,
+            }
+    return {"error": "not_found"}
+
+
+def logic_rename(
+    conn: sqlite3.Connection,
+    user_id: int,
+    user_name: str,
+    new_name: str,
+) -> dict:
+    new_name = new_name.strip()
+    if not new_name:
+        return {"error": "❌  Name cannot be empty."}
+    if len(new_name) > MAX_PET_NAME_LEN:
+        return {"error": f"❌  Name must be {MAX_PET_NAME_LEN} characters or fewer."}
+    new_name = _clean(new_name, max_len=MAX_PET_NAME_LEN)
+    _get_or_create_pet(conn, user_id, user_name)
+    conn.execute("UPDATE pets SET pet_name = ? WHERE user_id = ?", (new_name, user_id))
+    conn.commit()
+    return {"error": None, "pet_name": new_name}

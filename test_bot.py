@@ -9,9 +9,14 @@ from logic import (
     logic_register, logic_cancel, logic_adduser,
     logic_addpassword, logic_listpasswords, logic_usepassword, logic_delete,
     logic_subscribe, logic_unsubscribe, _pop_subscribers_for_court,
+    logic_pet, logic_food, logic_feed, logic_whistle, logic_rename,
+    _get_or_create_pet, _award_cmd_food,
+    _pet_tier, _xp_for_tier, _xp_to_next_tier, _pet_hash,
+    PET_TIERS,
     SLOT_DURATION_MINS, MAX_ACTIVE_RESERVATIONS, MAX_PASSWORDS,
     MAX_USERS_PER_RESERVATION, MAX_COURT_NUMBER, MAX_GROUPS_IN_FRONT,
-    MAX_CREDENTIAL_LEN,
+    MAX_CREDENTIAL_LEN, MAX_PET_NAME_LEN,
+    FOOD_PER_RESERVATION, FOOD_PER_PASSWORD, CMD_FOOD_COOLDOWN_SECS,
 )
 
 
@@ -66,6 +71,7 @@ class TestLogicRegister(unittest.TestCase):
         self.assertEqual(r["start_time"], now)
         self.assertEqual(r["end_time"], now + timedelta(minutes=SLOT_DURATION_MINS))
         self.assertIsNotNone(r["res_id"])
+        self.assertEqual(r["food_awarded"], FOOD_PER_RESERVATION)
 
     def test_success_with_queue(self):
         now = datetime(2024, 1, 1, 10, 0)
@@ -357,6 +363,7 @@ class TestLogicUsePassword(unittest.TestCase):
         self.assertIsNone(r["error"])
         self.assertEqual(r["court_number"], 3)
         self.assertEqual(r["pw_username"], "user1")
+        self.assertEqual(r["food_awarded"], FOOD_PER_PASSWORD)
 
     def test_password_id_persisted_to_reservation(self):
         res_id = insert_res(self.db, user_id=1)
@@ -524,6 +531,476 @@ class TestLogicSubscribe(unittest.TestCase):
         _pop_subscribers_for_court(self.db, 3)
         count = self.db.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]
         self.assertEqual(count, 1)
+
+
+# ─────────────────────────────────────────────────────────────
+# Pet tier math
+# ─────────────────────────────────────────────────────────────
+class TestPetTierMath(unittest.TestCase):
+    def test_tier_zero_at_xp_zero(self):
+        self.assertEqual(_pet_tier(0), 0)
+
+    def test_tier_zero_just_before_threshold(self):
+        self.assertEqual(_pet_tier(19), 0)
+
+    def test_tier_one_at_threshold(self):
+        self.assertEqual(_pet_tier(20), 1)
+
+    def test_tier_one_just_before_next(self):
+        self.assertEqual(_pet_tier(59), 1)
+
+    def test_tier_two_at_threshold(self):
+        self.assertEqual(_pet_tier(60), 2)
+
+    def test_tier_three_at_threshold(self):
+        # cumulative: 20+40+60 = 120
+        self.assertEqual(_pet_tier(120), 3)
+
+    def test_tier_four_at_threshold(self):
+        # cumulative: 20+40+60+80 = 200
+        self.assertEqual(_pet_tier(200), 4)
+
+    def test_xp_for_tier_zero(self):
+        self.assertEqual(_xp_for_tier(0), 0)
+
+    def test_xp_for_tier_one(self):
+        self.assertEqual(_xp_for_tier(1), 20)
+
+    def test_xp_for_tier_two(self):
+        self.assertEqual(_xp_for_tier(2), 60)
+
+    def test_xp_for_tier_three(self):
+        self.assertEqual(_xp_for_tier(3), 120)
+
+    def test_xp_to_next_from_zero(self):
+        self.assertEqual(_xp_to_next_tier(0), 20)
+
+    def test_xp_to_next_mid_tier(self):
+        self.assertEqual(_xp_to_next_tier(10), 10)
+
+    def test_xp_to_next_at_boundary(self):
+        # Just reached tier 1 (xp=20), needs 40 more to reach tier 2 (xp=60)
+        self.assertEqual(_xp_to_next_tier(20), 40)
+
+    def test_xp_to_next_at_max_tier(self):
+        # At or beyond max tier returns 0
+        max_xp = _xp_for_tier(len(PET_TIERS) - 1) + 100
+        self.assertEqual(_xp_to_next_tier(max_xp), 0)
+
+    def test_tier_capped_at_max(self):
+        self.assertEqual(_pet_tier(999999), len(PET_TIERS) - 1)
+
+    def test_formula_is_consistent(self):
+        # xp_for_tier(n) should always get you exactly to tier n
+        for n in range(len(PET_TIERS)):
+            self.assertEqual(_pet_tier(_xp_for_tier(n)), n)
+
+
+# ─────────────────────────────────────────────────────────────
+# Pet hash
+# ─────────────────────────────────────────────────────────────
+class TestPetHash(unittest.TestCase):
+    def test_returns_eight_chars(self):
+        h = _pet_hash("Fluffy", 10, 50)
+        self.assertEqual(len(h), 8)
+
+    def test_deterministic(self):
+        self.assertEqual(_pet_hash("A", 1, 1), _pet_hash("A", 1, 1))
+
+    def test_changes_with_name(self):
+        self.assertNotEqual(_pet_hash("A", 1, 1), _pet_hash("B", 1, 1))
+
+    def test_changes_with_food(self):
+        self.assertNotEqual(_pet_hash("A", 1, 1), _pet_hash("A", 2, 1))
+
+    def test_changes_with_xp(self):
+        self.assertNotEqual(_pet_hash("A", 1, 1), _pet_hash("A", 1, 2))
+
+    def test_hex_only(self):
+        h = _pet_hash("Pet", 0, 0)
+        self.assertTrue(all(c in "0123456789abcdef" for c in h))
+
+
+# ─────────────────────────────────────────────────────────────
+# _get_or_create_pet
+# ─────────────────────────────────────────────────────────────
+class TestGetOrCreatePet(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_creates_pet_if_missing(self):
+        p = _get_or_create_pet(self.db, 1, "Alice")
+        self.assertEqual(p["user_id"], 1)
+        self.assertEqual(p["pet_name"], "Pet")
+        self.assertEqual(p["experience"], 0)
+        self.assertEqual(p["food"], 0)
+        self.assertIsNone(p["last_cmd_food"])
+
+    def test_returns_existing_pet(self):
+        _get_or_create_pet(self.db, 1, "Alice")
+        self.db.execute("UPDATE pets SET food=99 WHERE user_id=1")
+        self.db.commit()
+        p = _get_or_create_pet(self.db, 1, "Alice")
+        self.assertEqual(p["food"], 99)
+
+    def test_idempotent(self):
+        _get_or_create_pet(self.db, 1, "Alice")
+        _get_or_create_pet(self.db, 1, "Alice")
+        count = self.db.execute("SELECT COUNT(*) FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(count, 1)
+
+
+# ─────────────────────────────────────────────────────────────
+# _award_cmd_food
+# ─────────────────────────────────────────────────────────────
+class TestAwardCmdFood(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_first_award_succeeds(self):
+        got = _award_cmd_food(self.db, 1, "Alice")
+        self.assertTrue(got)
+        p = _get_or_create_pet(self.db, 1, "Alice")
+        self.assertEqual(p["food"], 1)
+
+    def test_second_award_within_cooldown_blocked(self):
+        now = datetime(2024, 1, 1, 12, 0, 0)
+        _award_cmd_food(self.db, 1, "Alice", now=now)
+        soon = now + timedelta(seconds=CMD_FOOD_COOLDOWN_SECS - 1)
+        got = _award_cmd_food(self.db, 1, "Alice", now=soon)
+        self.assertFalse(got)
+        p = _get_or_create_pet(self.db, 1, "Alice")
+        self.assertEqual(p["food"], 1)
+
+    def test_award_after_cooldown_succeeds(self):
+        now = datetime(2024, 1, 1, 12, 0, 0)
+        _award_cmd_food(self.db, 1, "Alice", now=now)
+        later = now + timedelta(seconds=CMD_FOOD_COOLDOWN_SECS)
+        got = _award_cmd_food(self.db, 1, "Alice", now=later)
+        self.assertTrue(got)
+        p = _get_or_create_pet(self.db, 1, "Alice")
+        self.assertEqual(p["food"], 2)
+
+    def test_different_users_independent(self):
+        now = datetime(2024, 1, 1, 12, 0, 0)
+        _award_cmd_food(self.db, 1, "Alice", now=now)
+        got = _award_cmd_food(self.db, 2, "Bob", now=now)
+        self.assertTrue(got)
+
+
+# ─────────────────────────────────────────────────────────────
+# logic_pet
+# ─────────────────────────────────────────────────────────────
+class TestLogicPet(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_creates_pet_on_first_call(self):
+        r = logic_pet(self.db, 1, "Alice")
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["pet_name"], "Pet")
+        self.assertEqual(r["tier"], 0)
+        self.assertEqual(r["xp"], 0)
+        self.assertEqual(r["food"], 0)
+        self.assertFalse(r["at_max"])
+
+    def test_emoji_matches_tier(self):
+        r = logic_pet(self.db, 1, "Alice")
+        self.assertEqual(r["emoji"], PET_TIERS[r["tier"]])
+
+    def test_hash_is_eight_chars(self):
+        r = logic_pet(self.db, 1, "Alice")
+        self.assertEqual(len(r["hash"]), 8)
+
+    def test_xp_to_next_at_zero(self):
+        r = logic_pet(self.db, 1, "Alice")
+        self.assertEqual(r["xp_to_next"], 20)
+
+    def test_reflects_current_xp(self):
+        _get_or_create_pet(self.db, 1, "Alice")
+        self.db.execute("UPDATE pets SET experience=60 WHERE user_id=1")
+        self.db.commit()
+        r = logic_pet(self.db, 1, "Alice")
+        self.assertEqual(r["tier"], 2)
+        self.assertEqual(r["emoji"], PET_TIERS[2])
+
+
+# ─────────────────────────────────────────────────────────────
+# logic_food
+# ─────────────────────────────────────────────────────────────
+class TestLogicFood(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_zero_on_new_user(self):
+        r = logic_food(self.db, 1, "Alice")
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["food"], 0)
+
+    def test_reflects_stored_food(self):
+        _get_or_create_pet(self.db, 1, "Alice")
+        self.db.execute("UPDATE pets SET food=42 WHERE user_id=1")
+        self.db.commit()
+        r = logic_food(self.db, 1, "Alice")
+        self.assertEqual(r["food"], 42)
+
+
+# ─────────────────────────────────────────────────────────────
+# logic_feed
+# ─────────────────────────────────────────────────────────────
+class TestLogicFeed(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+        _get_or_create_pet(self.db, 1, "Alice")
+
+    def _set_food(self, amount):
+        self.db.execute("UPDATE pets SET food=? WHERE user_id=1", (amount,))
+        self.db.commit()
+
+    def _set_xp(self, xp):
+        self.db.execute("UPDATE pets SET experience=? WHERE user_id=1", (xp,))
+        self.db.commit()
+
+    def test_error_no_food(self):
+        r = logic_feed(self.db, 1, "Alice", 1)
+        self.assertEqual(r["error"], "no_food")
+
+    def test_error_zero_amount(self):
+        self._set_food(10)
+        r = logic_feed(self.db, 1, "Alice", 0)
+        self.assertIsNotNone(r["error"])
+
+    def test_error_negative_amount(self):
+        self._set_food(10)
+        r = logic_feed(self.db, 1, "Alice", -1)
+        self.assertIsNotNone(r["error"])
+
+    def test_feed_one(self):
+        self._set_food(5)
+        r = logic_feed(self.db, 1, "Alice", 1)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["fed"], 1)
+        self.assertEqual(r["food_left"], 4)
+        self.assertEqual(r["new_xp"], 1)
+
+    def test_feed_all_when_amount_none(self):
+        self._set_food(10)
+        r = logic_feed(self.db, 1, "Alice", None)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["fed"], 10)
+        self.assertEqual(r["food_left"], 0)
+
+    def test_feed_capped_at_available_food(self):
+        self._set_food(3)
+        r = logic_feed(self.db, 1, "Alice", 100)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["fed"], 3)
+
+    def test_food_deducted_from_db(self):
+        self._set_food(10)
+        logic_feed(self.db, 1, "Alice", 4)
+        food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(food, 6)
+
+    def test_xp_added_to_db(self):
+        self._set_food(10)
+        logic_feed(self.db, 1, "Alice", 5)
+        xp = self.db.execute("SELECT experience FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(xp, 5)
+
+    def test_grew_flag_false_when_no_tier_change(self):
+        self._set_food(5)
+        r = logic_feed(self.db, 1, "Alice", 5)
+        self.assertFalse(r["grew"])
+
+    def test_grew_flag_true_when_tier_increases(self):
+        self._set_food(20)
+        r = logic_feed(self.db, 1, "Alice", 20)
+        self.assertTrue(r["grew"])
+        self.assertEqual(r["new_tier"], 1)
+
+    def test_food_emoji_in_result(self):
+        self._set_food(5)
+        r = logic_feed(self.db, 1, "Alice", 1)
+        self.assertIn("food_emoji", r)
+        self.assertTrue(len(r["food_emoji"]) > 0)
+
+    def test_at_max_when_legendary(self):
+        self._set_food(10000)
+        self.db.execute("UPDATE pets SET experience=99999 WHERE user_id=1")
+        self.db.commit()
+        r = logic_feed(self.db, 1, "Alice", 1)
+        self.assertTrue(r["at_max"])
+
+
+# ─────────────────────────────────────────────────────────────
+# logic_whistle
+# ─────────────────────────────────────────────────────────────
+class TestLogicWhistle(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+        _get_or_create_pet(self.db, 1, "Alice")
+
+    def _current_hash(self, user_id=1):
+        p = _get_or_create_pet(self.db, user_id, "Alice")
+        return _pet_hash(p["pet_name"], p["food"], p["experience"])
+
+    def test_own_pet_returns_own_status(self):
+        code = self._current_hash()
+        r = logic_whistle(self.db, 1, "Alice", code)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["status"], "own")
+
+    def test_not_found_with_bad_code(self):
+        r = logic_whistle(self.db, 1, "Alice", "00000000")
+        self.assertEqual(r["error"], "not_found")
+
+    def test_recover_transfers_pet(self):
+        # User 2 tries to claim user 1's pet via its code
+        code = self._current_hash(user_id=1)
+        r = logic_whistle(self.db, 2, "Bob", code)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["status"], "recovered")
+        # Pet row should now belong to user 2
+        owner = self.db.execute("SELECT user_id FROM pets WHERE pet_name='Pet'").fetchone()[0]
+        self.assertEqual(owner, 2)
+
+    def test_code_changes_after_food_changes(self):
+        code_before = self._current_hash()
+        self.db.execute("UPDATE pets SET food=10 WHERE user_id=1")
+        self.db.commit()
+        r = logic_whistle(self.db, 1, "Alice", code_before)
+        self.assertEqual(r["error"], "not_found")
+
+
+# ─────────────────────────────────────────────────────────────
+# logic_rename
+# ─────────────────────────────────────────────────────────────
+class TestLogicRename(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_success(self):
+        r = logic_rename(self.db, 1, "Alice", "Fluffy")
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["pet_name"], "Fluffy")
+
+    def test_name_persisted(self):
+        logic_rename(self.db, 1, "Alice", "Sparky")
+        name = self.db.execute("SELECT pet_name FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(name, "Sparky")
+
+    def test_error_empty_name(self):
+        r = logic_rename(self.db, 1, "Alice", "   ")
+        self.assertIsNotNone(r["error"])
+
+    def test_error_name_too_long(self):
+        r = logic_rename(self.db, 1, "Alice", "x" * (MAX_PET_NAME_LEN + 1))
+        self.assertIsNotNone(r["error"])
+
+    def test_max_length_name_accepted(self):
+        r = logic_rename(self.db, 1, "Alice", "x" * MAX_PET_NAME_LEN)
+        self.assertIsNone(r["error"])
+
+    def test_creates_pet_if_missing(self):
+        logic_rename(self.db, 99, "New", "Buddy")
+        row = self.db.execute("SELECT pet_name FROM pets WHERE user_id=99").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "Buddy")
+
+
+# ─────────────────────────────────────────────────────────────
+# Registration gate (MIN_PASSWORDS_FOR_NEW_RES)
+# ─────────────────────────────────────────────────────────────
+class TestRegisterGate(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_first_reservation_allowed(self):
+        r = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.assertIsNone(r["error"])
+
+    def test_second_reservation_blocked_when_no_passwords(self):
+        logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        r = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.assertEqual(r["error"], "REMIND")
+
+    def test_second_reservation_blocked_with_one_password(self):
+        r1 = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.db.execute(
+            "UPDATE reservations SET passwords_used=1 WHERE id=?", (r1["res_id"],)
+        )
+        self.db.commit()
+        r = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.assertEqual(r["error"], "REMIND")
+
+    def test_second_reservation_allowed_with_two_passwords(self):
+        r1 = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.db.execute(
+            "UPDATE reservations SET passwords_used=2 WHERE id=?", (r1["res_id"],)
+        )
+        self.db.commit()
+        r = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.assertIsNone(r["error"])
+
+    def test_different_users_independent(self):
+        logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        r = logic_register(self.db, 2, "Bob", 100, 1, 0, 0.0)
+        self.assertIsNone(r["error"])
+
+    def test_food_awarded_on_success(self):
+        r = logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["food_awarded"], FOOD_PER_RESERVATION)
+
+    def test_pet_food_updated_in_db(self):
+        logic_register(self.db, 1, "Alice", 100, 1, 0, 0.0)
+        food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(food, FOOD_PER_RESERVATION)
+
+
+# ─────────────────────────────────────────────────────────────
+# usepassword: passwords_used increment and food award
+# ─────────────────────────────────────────────────────────────
+class TestUsePasswordExtras(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def test_passwords_used_incremented(self):
+        res_id = insert_res(self.db, user_id=1)
+        insert_pw(self.db, username="u1")
+        logic_usepassword(self.db, res_id, "u1", 1)
+        used = self.db.execute(
+            "SELECT passwords_used FROM reservations WHERE id=?", (res_id,)
+        ).fetchone()[0]
+        self.assertEqual(used, 1)
+
+    def test_passwords_used_increments_twice(self):
+        res_id = insert_res(self.db, user_id=1)
+        insert_pw(self.db, username="u1")
+        insert_pw(self.db, username="u2")
+        logic_usepassword(self.db, res_id, "u1", 1)
+        logic_usepassword(self.db, res_id, "u2", 1)
+        used = self.db.execute(
+            "SELECT passwords_used FROM reservations WHERE id=?", (res_id,)
+        ).fetchone()[0]
+        self.assertEqual(used, 2)
+
+    def test_food_awarded_to_caller(self):
+        res_id = insert_res(self.db, user_id=1)
+        insert_pw(self.db, username="u1")
+        logic_usepassword(self.db, res_id, "u1", 1)
+        food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(food, FOOD_PER_PASSWORD)
+
+    def test_food_stacks_with_multiple_calls(self):
+        res_id = insert_res(self.db, user_id=1)
+        insert_pw(self.db, username="u1")
+        insert_pw(self.db, username="u2")
+        logic_usepassword(self.db, res_id, "u1", 1)
+        logic_usepassword(self.db, res_id, "u2", 1)
+        food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
+        self.assertEqual(food, FOOD_PER_PASSWORD * 2)
 
 
 if __name__ == "__main__":
