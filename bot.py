@@ -54,6 +54,7 @@ from logic import (
     logic_addpassword, logic_listpasswords, logic_usepassword,
     logic_subscribe, logic_unsubscribe, logic_delete,
     logic_pet, logic_food, logic_feed, logic_whistle, logic_rename,
+    delete_expired_passwords,
 )
 
 # ─────────────────────────────────────────────────────────────
@@ -134,6 +135,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @bot.event
 async def on_ready():
     print(f"✅  Logged in as {bot.user}  (ID: {bot.user.id})")
+    expired = delete_expired_passwords(db)
+    if expired:
+        print(f"🕛  Startup cleanup — deleted {expired} expired password(s) missed while bot was offline.")
     try:
         if GUILD:
             bot.tree.copy_global_to(guild=GUILD)
@@ -311,8 +315,7 @@ async def cmd_listpasswords(interaction: discord.Interaction):
     if result["empty"]:
         await interaction.response.send_message(
             "📋  No passwords in the pool yet. Use `/addpassword` to add one.\n"
-            "*💬 Tip: DM this bot to use commands without cluttering the channel.*",
-            ephemeral=True,
+            "*💬 Tip: DM this bot to use commands without cluttering the channel.*"
         )
         return
 
@@ -343,7 +346,7 @@ async def cmd_listpasswords(interaction: discord.Interaction):
     )
     if got_food:
         embed.add_field(name="🍖  Food", value="+1 food earned!", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 # ─────────────────────────────────────────────────────────────
 # /usepassword

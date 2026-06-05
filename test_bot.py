@@ -10,9 +10,10 @@ from logic import (
     logic_addpassword, logic_listpasswords, logic_usepassword, logic_delete,
     logic_subscribe, logic_unsubscribe, _pop_subscribers_for_court,
     logic_pet, logic_food, logic_feed, logic_whistle, logic_rename,
+    delete_expired_passwords,
     _get_or_create_pet, _award_cmd_food,
     _pet_tier, _xp_for_tier, _xp_to_next_tier, _pet_hash,
-    PET_TIERS,
+    PET_TIERS, PACIFIC,
     SLOT_DURATION_MINS, MAX_ACTIVE_RESERVATIONS, MAX_PASSWORDS,
     MAX_USERS_PER_RESERVATION, MAX_COURT_NUMBER, MAX_GROUPS_IN_FRONT,
     MAX_CREDENTIAL_LEN, MAX_PET_NAME_LEN,
@@ -1001,6 +1002,60 @@ class TestUsePasswordExtras(unittest.TestCase):
         logic_usepassword(self.db, res_id, "u2", 1)
         food = self.db.execute("SELECT food FROM pets WHERE user_id=1").fetchone()[0]
         self.assertEqual(food, FOOD_PER_PASSWORD * 2)
+
+
+# ─────────────────────────────────────────────────────────────
+# delete_expired_passwords (startup cleanup)
+# ─────────────────────────────────────────────────────────────
+class TestDeleteExpiredPasswords(unittest.TestCase):
+    def setUp(self):
+        self.db = make_db()
+
+    def _insert_pw_at(self, added_at: datetime, username="u1") -> int:
+        cur = self.db.execute(
+            "INSERT INTO passwords (username, password, added_by, added_at) VALUES (?, ?, ?, ?)",
+            (username, "pass", "Bot", added_at.isoformat()),
+        )
+        self.db.commit()
+        return cur.lastrowid
+
+    def _noon_pt(self, days_ago=0) -> datetime:
+        today = datetime.now(PACIFIC).date()
+        d = today - timedelta(days=days_ago)
+        return datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=PACIFIC)
+
+    def test_deletes_password_from_yesterday(self):
+        self._insert_pw_at(self._noon_pt(days_ago=1).astimezone().replace(tzinfo=None))
+        now_pt = datetime.now(PACIFIC)
+        deleted = delete_expired_passwords(self.db, now_pt=now_pt)
+        self.assertEqual(deleted, 1)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM passwords").fetchone()[0], 0)
+
+    def test_keeps_password_from_today(self):
+        self._insert_pw_at(self._noon_pt(days_ago=0).astimezone().replace(tzinfo=None))
+        now_pt = datetime.now(PACIFIC)
+        deleted = delete_expired_passwords(self.db, now_pt=now_pt)
+        self.assertEqual(deleted, 0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM passwords").fetchone()[0], 1)
+
+    def test_deletes_multiple_old_passwords(self):
+        self._insert_pw_at(self._noon_pt(days_ago=2).astimezone().replace(tzinfo=None), "u1")
+        self._insert_pw_at(self._noon_pt(days_ago=3).astimezone().replace(tzinfo=None), "u2")
+        self._insert_pw_at(self._noon_pt(days_ago=0).astimezone().replace(tzinfo=None), "u3")
+        deleted = delete_expired_passwords(self.db, now_pt=datetime.now(PACIFIC))
+        self.assertEqual(deleted, 2)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM passwords").fetchone()[0], 1)
+
+    def test_no_passwords_returns_zero(self):
+        deleted = delete_expired_passwords(self.db, now_pt=datetime.now(PACIFIC))
+        self.assertEqual(deleted, 0)
+
+    def test_idempotent(self):
+        self._insert_pw_at(self._noon_pt(days_ago=1).astimezone().replace(tzinfo=None))
+        now_pt = datetime.now(PACIFIC)
+        delete_expired_passwords(self.db, now_pt=now_pt)
+        deleted2 = delete_expired_passwords(self.db, now_pt=now_pt)
+        self.assertEqual(deleted2, 0)
 
 
 if __name__ == "__main__":

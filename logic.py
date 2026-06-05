@@ -407,6 +407,35 @@ def logic_listpasswords(
     }
 
 
+def delete_expired_passwords(
+    conn: sqlite3.Connection,
+    now_pt: datetime | None = None,
+) -> int:
+    """
+    Deletes passwords added before the most recent midnight PT.
+    Returns the number of rows deleted.
+    Called at bot startup to handle missed midnight resets.
+    """
+    if now_pt is None:
+        now_pt = datetime.now(PACIFIC)
+    last_midnight_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+    # added_at is stored as naive local time via datetime.now().isoformat();
+    # convert last midnight PT to naive local for a like-for-like comparison.
+    last_midnight_local = last_midnight_pt.astimezone().replace(tzinfo=None)
+    deleted = conn.execute(
+        "DELETE FROM passwords WHERE added_at < ?",
+        (last_midnight_local.isoformat(),),
+    ).rowcount
+    if deleted:
+        conn.execute(
+            "UPDATE reservations SET password_id=NULL WHERE password_id IS NOT NULL "
+            "AND active=1 AND id NOT IN (SELECT id FROM reservations WHERE password_id IN "
+            "(SELECT id FROM passwords))"
+        )
+    conn.commit()
+    return deleted
+
+
 def logic_usepassword(
     conn: sqlite3.Connection,
     reservation_id: int,
