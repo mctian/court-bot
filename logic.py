@@ -36,54 +36,59 @@ DB_PATH = "court_bot.db"
 # Ordered from most common/simple → rarest/legendary.
 # Tier N requires cumulative XP = 10 * N * (N+1): 0, 20, 60, 120, 200, 300 …
 PET_TIERS = [
-    "🌱",  # 0  Seedling
-    "🐛",  # 1  Caterpillar
-    "🐌",  # 2  Snail
-    "🐝",  # 3  Bee
-    "🐞",  # 4  Ladybug
-    "🐜",  # 5  Ant
-    "🐭",  # 6  Mouse
-    "🐹",  # 7  Hamster
-    "🐇",  # 8  Rabbit
-    "🦔",  # 9  Hedgehog
-    "🐿️", # 10 Chipmunk
-    "🐱",  # 11 Cat
-    "🐶",  # 12 Dog
-    "🐸",  # 13 Frog
-    "🐔",  # 14 Chicken
-    "🐮",  # 15 Cow
-    "🐷",  # 16 Pig
-    "🐑",  # 17 Sheep
-    "🦆",  # 18 Duck
-    "🐧",  # 19 Penguin
-    "🦊",  # 20 Fox
-    "🐻",  # 21 Bear
-    "🐨",  # 22 Koala
-    "🐼",  # 23 Panda
-    "🦘",  # 24 Kangaroo
-    "🐯",  # 25 Tiger
-    "🦁",  # 26 Lion
-    "🐺",  # 27 Wolf
-    "🦝",  # 28 Raccoon
-    "🦜",  # 29 Parrot
-    "🦉",  # 30 Owl
-    "🦅",  # 31 Eagle
-    "🦚",  # 32 Peacock
-    "🦩",  # 33 Flamingo
-    "🐬",  # 34 Dolphin
-    "🦈",  # 35 Shark
-    "🐙",  # 36 Octopus
-    "🦑",  # 37 Squid
-    "🐋",  # 38 Whale
-    "🦋",  # 39 Butterfly
-    "🦎",  # 40 Lizard
-    "🐢",  # 41 Turtle
-    "🐍",  # 42 Snake
-    "🦕",  # 43 Sauropod
-    "🦖",  # 44 T-Rex
-    "🦄",  # 45 Unicorn
-    "🐲",  # 46 Dragon
-    "🐉",  # 47 Dragon (legendary)
+    # ── Tier 0-9: tiny, common, abundant ─────────────────────────────
+    "🐛",  # 0  Caterpillar   — very common, small, low cuteness
+    "🐜",  # 1  Ant           — extremely common, tiny
+    "🐌",  # 2  Snail         — common, small, mildly cute
+    "🐞",  # 3  Ladybug       — common, small, a bit cute
+    "🐝",  # 4  Bee           — common, small, moderately cute
+    "🌱",  # 5  Seedling      — abundant, tiny, surprisingly cute
+    "🦗",  # 6  Cricket       — common, small, low cuteness
+    "🐟",  # 7  Fish          — very common, small, mild cuteness
+    "🐠",  # 8  Tropical Fish — common, small, colorful/cute
+    "🐡",  # 9  Blowfish      — common, small, goofy-cute
+    # ── Tier 10-19: small, somewhat rare, cuter ──────────────────────
+    "🐭",  # 10 Mouse         — common, small, cute
+    "🐹",  # 11 Hamster       — common, small, very cute
+    "🐸",  # 12 Frog          — common, small, cute
+    "🐔",  # 13 Chicken       — common, medium-small, mild cuteness
+    "🐦",  # 14 Bird          — common, small, moderate cuteness
+    "🦆",  # 15 Duck          — common, small-medium, cute
+    "🦔",  # 16 Hedgehog      — somewhat rare, small, very cute
+    "🐿️", # 17 Chipmunk      — somewhat rare, small, very cute
+    "🐇",  # 18 Rabbit        — common, small-medium, very cute
+    "🐧",  # 19 Penguin       — moderately rare, small, very cute
+    # ── Tier 20-29: medium, rarer, cute & charismatic ────────────────
+    "🐱",  # 20 Cat           — common, medium, very cute
+    "🐶",  # 21 Dog           — common, medium, very cute
+    "🦊",  # 22 Fox           — moderately rare, medium, very cute
+    "🦝",  # 23 Raccoon       — moderately rare, medium, cute
+    "🐨",  # 24 Koala         — rare, medium, extremely cute
+    "🐼",  # 25 Panda         — rare, medium-large, extremely cute
+    "🦦",  # 26 Otter         — rare, small-medium, extremely cute
+    "🦥",  # 27 Sloth         — rare, medium, oddly very cute
+    "🦘",  # 28 Kangaroo      — rare, large, cute
+    "🐮",  # 29 Cow           — common, large, mild cuteness
+    # ── Tier 30-39: large, rarer, impressive ─────────────────────────
+    "🦁",  # 30 Lion          — rare, large, majestic
+    "🐯",  # 31 Tiger         — rare, large, majestic + cute
+    "🐺",  # 32 Wolf          — rare, large, majestic
+    "🐻",  # 33 Bear          — rare, large, somewhat cute
+    "🦅",  # 34 Eagle         — rare, large, majestic
+    "🦉",  # 35 Owl           — rare, medium, very cute + wise
+    "🦚",  # 36 Peacock       — rare, large, spectacular
+    "🦩",  # 37 Flamingo      — rare, large, elegant + cute
+    "🦜",  # 38 Parrot        — rare, medium, very cute + colorful
+    "🦋",  # 39 Butterfly     — rare, small, ethereally beautiful
+    # ── Tier 40-47: exotic, very rare, legendary ─────────────────────
+    "🐬",  # 40 Dolphin       — rare, large, very cute + intelligent
+    "🐙",  # 41 Octopus       — rare, medium, alien-cute
+    "🐋",  # 42 Whale         — very rare, enormous, majestic
+    "🦈",  # 43 Shark         — very rare, large, fierce
+    "🦕",  # 44 Sauropod      — extremely rare (extinct), huge, gentle-cute
+    "🦖",  # 45 T-Rex         — extremely rare (extinct), huge, fierce
+    "🦄",  # 46 Unicorn       — legendary, medium, magical + very cute
+    "🐉",  # 47 Dragon        — legendary, enormous, ultimate
 ]
 
 FOOD_EMOJIS = [
@@ -563,17 +568,22 @@ def _pop_subscribers_for_court(
 # Pet Helpers
 # ─────────────────────────────────────────────────────────────
 
+def _xp_for_tier(n: int) -> int:
+    """Cumulative XP required to reach tier n.
+    Cost per step = (tier // 10 + 1) * 20, so tiers 0-9 cost 20 each,
+    tiers 10-19 cost 40 each, 20-29 cost 60, etc.
+    Closed form: 100 * d * (d+1) + p * (d+1) * 20  where d = n//10, p = n%10.
+    """
+    d, p = n // 10, n % 10
+    return 100 * d * (d + 1) + p * (d + 1) * 20
+
+
 def _pet_tier(xp: int) -> int:
     """Returns the tier index (0–47) for the given cumulative XP."""
     tier = 0
-    while tier + 1 < len(PET_TIERS) and xp >= 10 * (tier + 1) * (tier + 2):
+    while tier + 1 < len(PET_TIERS) and xp >= _xp_for_tier(tier + 1):
         tier += 1
     return tier
-
-
-def _xp_for_tier(n: int) -> int:
-    """Cumulative XP required to reach tier n."""
-    return 10 * n * (n + 1)
 
 
 def _xp_to_next_tier(xp: int) -> int:

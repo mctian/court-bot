@@ -538,6 +538,8 @@ class TestLogicSubscribe(unittest.TestCase):
 # Pet tier math
 # ─────────────────────────────────────────────────────────────
 class TestPetTierMath(unittest.TestCase):
+    # Tiers 0-9: +20 per step; tiers 10-19: +40; 20-29: +60; etc.
+
     def test_tier_zero_at_xp_zero(self):
         self.assertEqual(_pet_tier(0), 0)
 
@@ -547,19 +549,25 @@ class TestPetTierMath(unittest.TestCase):
     def test_tier_one_at_threshold(self):
         self.assertEqual(_pet_tier(20), 1)
 
-    def test_tier_one_just_before_next(self):
-        self.assertEqual(_pet_tier(59), 1)
+    def test_tier_nine_at_threshold(self):
+        # tiers 1-9 each cost 20 → tier 9 at 9*20 = 180
+        self.assertEqual(_xp_for_tier(9), 180)
+        self.assertEqual(_pet_tier(180), 9)
 
-    def test_tier_two_at_threshold(self):
-        self.assertEqual(_pet_tier(60), 2)
+    def test_tier_ten_at_threshold(self):
+        # tiers 0-9 cost 10*20=200 total
+        self.assertEqual(_xp_for_tier(10), 200)
+        self.assertEqual(_pet_tier(200), 10)
 
-    def test_tier_three_at_threshold(self):
-        # cumulative: 20+40+60 = 120
-        self.assertEqual(_pet_tier(120), 3)
+    def test_tier_eleven_at_threshold(self):
+        # tier 10→11 costs 40 → 200+40=240
+        self.assertEqual(_xp_for_tier(11), 240)
+        self.assertEqual(_pet_tier(240), 11)
 
-    def test_tier_four_at_threshold(self):
-        # cumulative: 20+40+60+80 = 200
-        self.assertEqual(_pet_tier(200), 4)
+    def test_tier_twenty_at_threshold(self):
+        # tiers 0-9: 200, tiers 10-19: 10*40=400 → 600
+        self.assertEqual(_xp_for_tier(20), 600)
+        self.assertEqual(_pet_tier(600), 20)
 
     def test_xp_for_tier_zero(self):
         self.assertEqual(_xp_for_tier(0), 0)
@@ -568,23 +576,27 @@ class TestPetTierMath(unittest.TestCase):
         self.assertEqual(_xp_for_tier(1), 20)
 
     def test_xp_for_tier_two(self):
-        self.assertEqual(_xp_for_tier(2), 60)
+        # tiers 0-9 all cost 20; tier 2 = 2*20 = 40
+        self.assertEqual(_xp_for_tier(2), 40)
 
     def test_xp_for_tier_three(self):
-        self.assertEqual(_xp_for_tier(3), 120)
+        self.assertEqual(_xp_for_tier(3), 60)
 
     def test_xp_to_next_from_zero(self):
         self.assertEqual(_xp_to_next_tier(0), 20)
 
-    def test_xp_to_next_mid_tier(self):
+    def test_xp_to_next_mid_tier_0_to_9(self):
         self.assertEqual(_xp_to_next_tier(10), 10)
 
-    def test_xp_to_next_at_boundary(self):
-        # Just reached tier 1 (xp=20), needs 40 more to reach tier 2 (xp=60)
-        self.assertEqual(_xp_to_next_tier(20), 40)
+    def test_xp_to_next_at_tier_1_boundary(self):
+        # At tier 1 (xp=20), next step costs 20 → needs 20 more
+        self.assertEqual(_xp_to_next_tier(20), 20)
+
+    def test_xp_to_next_at_tier_10_boundary(self):
+        # At tier 10 (xp=200), next step costs 40
+        self.assertEqual(_xp_to_next_tier(200), 40)
 
     def test_xp_to_next_at_max_tier(self):
-        # At or beyond max tier returns 0
         max_xp = _xp_for_tier(len(PET_TIERS) - 1) + 100
         self.assertEqual(_xp_to_next_tier(max_xp), 0)
 
@@ -592,9 +604,15 @@ class TestPetTierMath(unittest.TestCase):
         self.assertEqual(_pet_tier(999999), len(PET_TIERS) - 1)
 
     def test_formula_is_consistent(self):
-        # xp_for_tier(n) should always get you exactly to tier n
         for n in range(len(PET_TIERS)):
             self.assertEqual(_pet_tier(_xp_for_tier(n)), n)
+
+    def test_step_costs_increase_by_decade(self):
+        # Each decade's step cost = (decade+1)*20
+        for decade in range(5):
+            tier_in_decade = decade * 10
+            cost = _xp_for_tier(tier_in_decade + 1) - _xp_for_tier(tier_in_decade)
+            self.assertEqual(cost, (decade + 1) * 20)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -725,8 +743,8 @@ class TestLogicPet(unittest.TestCase):
         self.db.execute("UPDATE pets SET experience=60 WHERE user_id=1")
         self.db.commit()
         r = logic_pet(self.db, 1, "Alice")
-        self.assertEqual(r["tier"], 2)
-        self.assertEqual(r["emoji"], PET_TIERS[2])
+        self.assertEqual(r["tier"], 3)  # 60 XP = tier 3 under new schedule (tiers 0-9 cost 20 each)
+        self.assertEqual(r["emoji"], PET_TIERS[3])
 
 
 # ─────────────────────────────────────────────────────────────
