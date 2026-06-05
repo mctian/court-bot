@@ -205,10 +205,9 @@ async def cmd_register(
 @bot.tree.command(name="status", description="Show all current and upcoming court reservations")
 async def cmd_status(interaction: discord.Interaction):
     got_food = _award_cmd_food(db, interaction.user.id, interaction.user.display_name)
-    embed = build_status_embed(_visible_reservations(db))
+    await interaction.response.send_message(embed=build_status_embed(_visible_reservations(db)))
     if got_food:
-        embed.set_footer(text=embed.footer.text + "  ·  🍖 +1 food earned!")
-    await interaction.response.send_message(embed=embed)
+        await interaction.followup.send("🍖  +1 food earned!", ephemeral=True)
 
 # ─────────────────────────────────────────────────────────────
 # /myreservations
@@ -219,7 +218,7 @@ async def cmd_myreservations(interaction: discord.Interaction):
     embed       = build_status_embed(_my_reservations(db, interaction.user.id))
     embed.title = f"🏸  {interaction.user.display_name}'s Reservations"
     if got_food:
-        embed.set_footer(text=(embed.footer.text or "") + "  ·  🍖 +1 food earned!")
+        embed.add_field(name="🍖  Food", value="+1 food earned!", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ─────────────────────────────────────────────────────────────
@@ -233,7 +232,7 @@ async def cmd_cancel(interaction: discord.Interaction, reservation_id: int):
         await interaction.response.send_message(result["error"], ephemeral=True)
         return
     got_food = _award_cmd_food(db, interaction.user.id, interaction.user.display_name)
-    food_line = "  🍖 +1 food earned!" if got_food else ""
+    food_line = "\n🍖  +1 food earned!" if got_food else ""
     await interaction.response.send_message(
         f"✅  Reservation **#{reservation_id}** has been cancelled.{food_line}\n"
         f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
@@ -313,8 +312,9 @@ async def cmd_listpasswords(interaction: discord.Interaction):
     got_food = _award_cmd_food(db, interaction.user.id, interaction.user.display_name)
     result = logic_listpasswords(db)
     if result["empty"]:
+        food_line = "\n🍖  +1 food earned!" if got_food else ""
         await interaction.response.send_message(
-            "📋  No passwords in the pool yet. Use `/addpassword` to add one.\n"
+            f"📋  No passwords in the pool yet. Use `/addpassword` to add one.{food_line}\n"
             "*💬 Tip: DM this bot to use commands without cluttering the channel.*"
         )
         return
@@ -420,7 +420,7 @@ async def cmd_delete(interaction: discord.Interaction, reservation_id: int):
         await interaction.response.send_message(result["error"], ephemeral=True)
         return
     got_food  = _award_cmd_food(db, interaction.user.id, interaction.user.display_name)
-    food_line = "  🍖 +1 food earned!" if got_food else ""
+    food_line = "\n🍖  +1 food earned!" if got_food else ""
     await interaction.response.send_message(
         f"🗑️  Reservation **#{reservation_id}** has been permanently deleted.{food_line}\n"
         f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
@@ -474,9 +474,9 @@ async def cmd_pet(interaction: discord.Interaction):
 async def cmd_food(interaction: discord.Interaction):
     got_food = _award_cmd_food(db, interaction.user.id, interaction.user.display_name)
     result   = logic_food(db, interaction.user.id, interaction.user.display_name)
-    bonus    = "  *(+1 just now!)*" if got_food else ""
+    food_line = "\n🍖  +1 food earned!" if got_food else ""
     await interaction.response.send_message(
-        f"🍽️  You have **{result['food']}** food.{bonus}\n"
+        f"🍽️  You have **{result['food']}** food.{food_line}\n"
         f"*Earn more by making reservations (+20), assigning passwords (+5), or using any command (+1/min).*",
         ephemeral=True,
     )
