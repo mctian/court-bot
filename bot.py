@@ -6,7 +6,7 @@ and pings users 2 minutes before their slot begins.
 State is persisted in SQLite (court_bot.db).
 
 Commands:
-  /register       — join the queue
+  /register       — join the queue (requires last reservation to have ≥2 passwords)
   /adduser        — add up to 3 more players to a reservation (max 4 total)
   /status         — see all reservations grouped by court
   /myreservations — see your own reservations (private)
@@ -17,6 +17,18 @@ Commands:
   /subscribe      — get a one-time DM 2 min before the next slot starts
   /unsubscribe    — cancel your court notification subscription
   /delete         — permanently delete one of your reservations
+
+Pet System:
+  /pet            — show your pet publicly; recovery code sent privately
+  /food           — check how much food you have
+  /feed [amount]  — feed your pet to gain XP (default: all food)
+  /rename <name>  — give your pet a new name
+  /whistle <code> — recover your pet using the code shown in /pet
+
+Food Economy:
+  +20 food  — making a reservation
+  +5 food   — assigning a password with /usepassword
+  +1 food   — any other command (once per minute)
 """
 
 import os
@@ -263,7 +275,7 @@ async def cmd_adduser(
     if got_food:
         lines.append("🍖  +1 food earned!")
     lines.append("\n*💬 Tip: DM this bot to use commands without cluttering the channel.*")
-    await interaction.response.send_message("\n".join(lines))
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 # ─────────────────────────────────────────────────────────────
 # /addpassword
@@ -285,7 +297,8 @@ async def cmd_addpassword(interaction: discord.Interaction, username: str, passw
     await interaction.response.send_message(
         f"✅  Password **#{result['pw_id']}** added to the pool.\n"
         f"> Username: `{result['username']}`  ·  Password: `{result['password']}`{food_line}\n"
-        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+        ephemeral=True,
     )
 
 # ─────────────────────────────────────────────────────────────
@@ -298,7 +311,8 @@ async def cmd_listpasswords(interaction: discord.Interaction):
     if result["empty"]:
         await interaction.response.send_message(
             "📋  No passwords in the pool yet. Use `/addpassword` to add one.\n"
-            "*💬 Tip: DM this bot to use commands without cluttering the channel.*"
+            "*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+            ephemeral=True,
         )
         return
 
@@ -329,7 +343,7 @@ async def cmd_listpasswords(interaction: discord.Interaction):
     )
     if got_food:
         embed.add_field(name="🍖  Food", value="+1 food earned!", inline=False)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ─────────────────────────────────────────────────────────────
 # /usepassword
@@ -349,7 +363,8 @@ async def cmd_usepassword(interaction: discord.Interaction, reservation_id: int,
         f"✅  `{result['pw_username']}` assigned to "
         f"Reservation **#{reservation_id}** · Court {result['court_number']}.\n"
         f"🍖  +{result['food_awarded']} food earned for your pet!\n"
-        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*"
+        f"*💬 Tip: DM this bot to use commands without cluttering the channel.*",
+        ephemeral=True,
     )
 
 # ─────────────────────────────────────────────────────────────
